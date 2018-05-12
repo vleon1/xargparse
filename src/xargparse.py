@@ -13,27 +13,24 @@ import six
 
 
 # todo:
-# parents
-
+# mutually exclusive groups
 # append_const
 # sub command
-# argument groups
-# mutually exclusive groups
-# Make sure that we work with multi inheritance in a sane way
 
-# help, version refactor
+# help, version common code refactor
 
-# better variable and class names
 # docstrings
 # readme
 # fix documentation about not supporting set_defaults and get_defaults, and other changes
 # pypi
-# tests
+# tests (copy from standard library and add some of our own..)
+# should we somehow separate the Argument result class from the parser class (can we?)
+# is there a better way to do argument groups?
 
 # changes list
 # 1) sane defaults...
 # 2) No set_defaults and get_defaults
-# 3)
+# 3) No parents argument for parser, inheritance is a perfect and working replacement
 
 
 _keep_default = object()
@@ -52,7 +49,7 @@ class SuppressError(ValueError):
         )
 
 
-class XAction(object):
+class ActionName(object):
     """ Use this for string actions, because named variables get auto completion and strings don't... """
 
     store = "store"
@@ -69,7 +66,7 @@ class XAction(object):
     parsers = "parsers"
 
 
-class _XargBase(object):
+class _Sortable(object):
 
     _index_counter = 0
 
@@ -78,14 +75,14 @@ class _XargBase(object):
         # No need to protect from racing access, since in a case of a "race" it will happen with two different classes
         # and so both will raise the counter and will have the same index value, but internally the class arguments will
         # still have sorted different indexes..
-        _XargBase._index_counter += 1
-        self.__instance_index__ = XArg._index_counter
+        _Sortable._index_counter += 1
+        self.__instance_index__ = Arg._index_counter
 
 
 USE_SANE_DEFAULTS = True
 
 
-class XArg(_XargBase):
+class Arg(_Sortable):
 
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -101,9 +98,10 @@ class XArg(_XargBase):
             help=_keep_default,
             metavar=_keep_default,
             version=_keep_default,
+            group=None,
     ):
 
-        super(XArg, self).__init__()
+        super(Arg, self).__init__()
 
         self.flags = flags
         self.action = action
@@ -115,6 +113,8 @@ class XArg(_XargBase):
         self.help = help
         self.metavar = metavar
         self.version = version
+
+        self.group = group
 
         self._default = default  # This is overwritten by the next line, and is only set to make the ide happy.
         self.default = default  # Keep at the end since the setter does sensitization that depends on the other values
@@ -136,14 +136,15 @@ class XArg(_XargBase):
 
         if self.default is _keep_default:
 
-            if self.action == XAction.append or self.nargs == "*" or self.nargs == "+" or self.nargs == REMAINDER:
+            if self.action == ActionName.append or self.nargs == "*" or self.nargs == "+" or self.nargs == REMAINDER:
                 self.default = []
 
-            if self.action == XAction.count:
+            if self.action == ActionName.count:
                 self.default = 0
 
 
-class XHelpArg(XArg):
+class HelpArg(Arg):
+    """ A convenience subclass for help arguments """
 
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -155,10 +156,10 @@ class XHelpArg(XArg):
         if not flags:
             flags = ["--help", "-h"]
 
-        super(XHelpArg, self).__init__(*flags, help=help, action=XAction.help)
+        super(HelpArg, self).__init__(*flags, help=help, action=ActionName.help)
 
 
-class XVersionArg(XArg):
+class VersionArg(Arg):
 
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -171,10 +172,17 @@ class XVersionArg(XArg):
         if not flags:
             flags = ["--version", "-v"]
 
-        super(XVersionArg, self).__init__(*flags, version=version, help=help, action=XAction.version)
+        super(VersionArg, self).__init__(*flags, version=version, help=help, action=ActionName.version)
 
 
-class XNamespace(_XargBase):
+class ArgumentGroup(object):
+
+    def __init__(self, title=None, description=None):
+        self.title = title
+        self.description = description
+
+
+class ParserHolder(_Sortable):
 
     _description = _keep_default
 
@@ -182,7 +190,6 @@ class XNamespace(_XargBase):
     _prog = _keep_default
     _usage = _keep_default
     _epilog = _keep_default
-    _parents = _keep_default
     _formatter_class = _keep_default
     _prefix_chars = _keep_default
     _fromfile_prefix_chars = _keep_default
@@ -209,8 +216,8 @@ class XNamespace(_XargBase):
     _use_sane_defaults = USE_SANE_DEFAULTS
 
     __argument_parser_kwarg_names = (
-        "prog", "usage", "description", "epilog", "parents", "formatter_class", "prefix_chars",
-        "fromfile_prefix_chars", "argument_default", "conflict_handler", "add_help", "allow_abbrev"
+        "prog", "usage", "description", "epilog", "formatter_class", "prefix_chars", "fromfile_prefix_chars",
+        "argument_default", "conflict_handler", "add_help", "allow_abbrev"
     )
 
     __argument_kwarg_names = (
@@ -225,7 +232,7 @@ class XNamespace(_XargBase):
         if self._help is not None and self._add_help is _keep_default:
             self._add_help = False
 
-        super(XNamespace, self).__init__()
+        super(ParserHolder, self).__init__()
 
         if sys.version_info.major < 3 or (sys.version_info.major == 3 and sys.version_info.minor < 5):
             self._allow_abbrev = _keep_default
@@ -235,13 +242,15 @@ class XNamespace(_XargBase):
 
         argument_variables_unfiltered = ((k, getattr(self, k)) for k in dir(self))
         argument_variables_unsorted = (
-            (k, v) for k, v in argument_variables_unfiltered if isinstance(v, _XargBase) and not k.startswith("_"))
+            (k, v) for k, v in argument_variables_unfiltered if isinstance(v, _Sortable) and not k.startswith("_"))
         argument_variables = sorted(argument_variables_unsorted, key=lambda kv: kv[1].__instance_index__)
         self.__argument_names = [k for k, v in argument_variables]
 
+        group_to_group_parser = {}
+
         for argument_name, argument in argument_variables:
 
-            if isinstance(argument, XArg):
+            if isinstance(argument, Arg):
 
                 if self._use_sane_defaults:
                     argument.make_default_argument_sane()
@@ -249,11 +258,19 @@ class XNamespace(_XargBase):
                 argument_kwargs = _get_none_default_kwargs(argument, self.__argument_kwarg_names)
                 argument_kwargs["dest"] = argument_name
 
-                self.parser.add_argument(*argument.flags, **argument_kwargs)
+                if argument.group is None:
+                    add_argument_function = self.parser.add_argument
+                else:
+                    if argument.group not in group_to_group_parser:
+                        group_to_group_parser[argument.group] = self.parser.add_argument_group(
+                            title=argument.group.title, description=argument.group.description)
+                    add_argument_function = group_to_group_parser[argument.group].add_argument
+
+                add_argument_function(*argument.flags, **argument_kwargs)
 
         if self._help is not None:
             if isinstance(self._help, six.string_types):
-                self._help = XHelpArg(
+                self._help = HelpArg(
                     *[a.format(p=self.parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
                     help=self._help)
 
@@ -264,7 +281,7 @@ class XNamespace(_XargBase):
 
         if self._version is not None:
             if isinstance(self._version, six.string_types):
-                self._version = XVersionArg(
+                self._version = VersionArg(
                     *[a.format(p=self.parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
                     version=self._version)
 
