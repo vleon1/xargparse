@@ -9,23 +9,31 @@ import sys
 # noinspection PyUnresolvedReferences
 from argparse import *
 
+import six
+
 
 # todo:
-# help argument
-# version argument
+# parents
 
 # append_const
 # sub command
-# parents
 # argument groups
 # mutually exclusive groups
 # Make sure that we work with multi inheritance in a sane way
 
-# docstring
+# help, version refactor
+
+# better variable and class names
+# docstrings
 # readme
-# add documentation about not supporting set_defaults and get_defaults
+# fix documentation about not supporting set_defaults and get_defaults, and other changes
 # pypi
 # tests
+
+# changes list
+# 1) sane defaults...
+# 2) No set_defaults and get_defaults
+# 3)
 
 
 _keep_default = object()
@@ -92,11 +100,8 @@ class XArg(_XargBase):
             required=_keep_default,
             help=_keep_default,
             metavar=_keep_default,
-            allow_abbrev=_keep_default,
+            version=_keep_default,
     ):
-
-        if sys.version_info.major < 3 or (sys.version_info.major == 3 and sys.version_info.minor < 5):
-            allow_abbrev = _keep_default
 
         super(XArg, self).__init__()
 
@@ -109,7 +114,7 @@ class XArg(_XargBase):
         self.required = required
         self.help = help
         self.metavar = metavar
-        self.allow_abbrev = allow_abbrev
+        self.version = version
 
         self._default = default  # This is overwritten by the next line, and is only set to make the ide happy.
         self.default = default  # Keep at the end since the setter does sensitization that depends on the other values
@@ -138,6 +143,37 @@ class XArg(_XargBase):
                 self.default = 0
 
 
+class XHelpArg(XArg):
+
+    # noinspection PyShadowingBuiltins
+    def __init__(
+            self,
+            *flags,
+            help=_keep_default,
+    ):
+
+        if not flags:
+            flags = ["--help", "-h"]
+
+        super(XHelpArg, self).__init__(*flags, help=help, action=XAction.help)
+
+
+class XVersionArg(XArg):
+
+    # noinspection PyShadowingBuiltins
+    def __init__(
+            self,
+            *flags,
+            version=None,
+            help=_keep_default,
+    ):
+
+        if not flags:
+            flags = ["--version", "-v"]
+
+        super(XVersionArg, self).__init__(*flags, version=version, help=help, action=XAction.version)
+
+
 class XNamespace(_XargBase):
 
     _description = _keep_default
@@ -153,6 +189,9 @@ class XNamespace(_XargBase):
     _argument_default = _keep_default
     _conflict_handler = _keep_default
     _add_help = _keep_default
+
+    """ Supported only in python>=3.5 on other versions it is silently ignored """
+    _allow_abbrev = _keep_default
 
     """ Change the parser class (Useful in cases where you would inherit and overwrite a method like """
     _parser_class = argparse.ArgumentParser
@@ -171,11 +210,11 @@ class XNamespace(_XargBase):
 
     __argument_parser_kwarg_names = (
         "prog", "usage", "description", "epilog", "parents", "formatter_class", "prefix_chars",
-        "fromfile_prefix_chars", "argument_default", "conflict_handler", "add_help"
+        "fromfile_prefix_chars", "argument_default", "conflict_handler", "add_help", "allow_abbrev"
     )
 
     __argument_kwarg_names = (
-        "action", "nargs", "const", "default", "type", "choices", "required", "help", "metavar", "allow_abbrev"
+        "action", "nargs", "const", "default", "type", "choices", "required", "help", "metavar", "version"
     )
 
     def __init__(self):
@@ -183,14 +222,21 @@ class XNamespace(_XargBase):
         if self._argument_default == SUPPRESS:
             raise SuppressError()
 
+        if self._help is not None and self._add_help is _keep_default:
+            self._add_help = False
+
         super(XNamespace, self).__init__()
+
+        if sys.version_info.major < 3 or (sys.version_info.major == 3 and sys.version_info.minor < 5):
+            self._allow_abbrev = _keep_default
 
         parser_kwargs = _get_none_default_kwargs(self, self.__argument_parser_kwarg_names, key_prefix="_")
         self._parser = self._parser_class(**parser_kwargs)
 
         argument_variables_unfiltered = ((k, getattr(self, k)) for k in dir(self))
-        argument_variables_unsorted = ((k, v) for k, v in argument_variables_unfiltered if isinstance(v, _XargBase))
-        argument_variables = sorted(argument_variables_unsorted, key=lambda kv: kv[1].index)
+        argument_variables_unsorted = (
+            (k, v) for k, v in argument_variables_unfiltered if isinstance(v, _XargBase) and not k.startswith("_"))
+        argument_variables = sorted(argument_variables_unsorted, key=lambda kv: kv[1].__instance_index__)
         self.__argument_names = [k for k, v in argument_variables]
 
         for argument_name, argument in argument_variables:
@@ -206,16 +252,26 @@ class XNamespace(_XargBase):
                 self.parser.add_argument(*argument.flags, **argument_kwargs)
 
         if self._help is not None:
+            if isinstance(self._help, six.string_types):
+                self._help = XHelpArg(
+                    *[a.format(p=self.parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
+                    help=self._help)
+
             argument_kwargs = _get_none_default_kwargs(self._help, self.__argument_kwarg_names)
             argument_kwargs["dest"] = SUPPRESS
 
-            self.parser.add_argument(**argument_kwargs)
+            self.parser.add_argument(*self._help.flags, **argument_kwargs)
 
         if self._version is not None:
+            if isinstance(self._version, six.string_types):
+                self._version = XVersionArg(
+                    *[a.format(p=self.parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
+                    version=self._version)
+
             argument_kwargs = _get_none_default_kwargs(self._version, self.__argument_kwarg_names)
             argument_kwargs["dest"] = SUPPRESS
 
-            self.parser.add_argument(**argument_kwargs)
+            self.parser.add_argument(*self._version.flags, **argument_kwargs)
 
     @property
     def parser(self):
@@ -226,9 +282,6 @@ class XNamespace(_XargBase):
         and you understand both the relevant code in xargparse and argparse.
         """
         return self._parser
-
-    def set_defaults(self, **kwargs):
-        raise AttributeError("This method is not supported as it goes against the philosophy of the library")
 
     def parse_args(self, args=None):
         parsed_dict = vars(self._parser.parse_args(args=args))

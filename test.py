@@ -1,6 +1,6 @@
 from enum import Enum, auto, unique
 
-from xargparse import XArg, XNamespace, XAction
+from xargparse import XArg, XNamespace, XAction, XHelpArg
 
 
 # noinspection PyCompatibility
@@ -19,6 +19,9 @@ class Gender(Enum):
 
 # noinspection PyCompatibility
 class Arguments(XNamespace):
+
+    _version = "v1.0.0.0"
+    _help = "Super help message!!!"
 
     name: str = XArg(help="Your name")
     family: str = XArg(help="Your family name")
