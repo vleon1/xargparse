@@ -37,6 +37,8 @@ class PersonInfo(ParserHolder):
 # noinspection PyCompatibility
 class PropertyInfo(ParserHolder):
 
+    street: str = Arg(help="Where do you live")
+
     has_cats: bool = Arg("--no-cats", default=True, action=ActionName.store_const, const=False,
                          group=questions,
                          help="Tell us if you have no cats")
