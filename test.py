@@ -56,6 +56,6 @@ class Arguments(PersonInfo, PropertyInfo):
 
 if __name__ == "__main__":
 
-    args = Arguments().parse_args()
+    args = Arguments()
 
     print(args)

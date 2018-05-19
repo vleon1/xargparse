@@ -83,7 +83,7 @@ class _KwargsHolder(object):
 
     _kwarg_names = ()
 
-    def get_kwargs(self, name_prefix=""):
+    def _get_kwargs(self, name_prefix=""):
         all_kwarg_pairs = ((k, getattr(self, name_prefix + k)) for k in self._kwarg_names)
         return {k: v for k, v in all_kwarg_pairs if v is not _keep_default}
 
@@ -213,9 +213,8 @@ class _ParserHolderMeta(type, _KwargsHolder):
     1) To give our classes the _sorted_arguments variable that allows to get only the _Sortable variables defined in
        the class (and not in the parents). We use __new__ to do that and it allows us to easily implement proper
        ArgumentParser.parents behaviour in our __init__ method
-    2) To define all the parser variables in a way that is only accessible to the class and not to the instance.
-       this will allow the
-
+    2) To supply the _get_kwargs method for the ParserHolder class (if ParserHolder were to inherit _KwargsHolder
+       it would have been an instance method and that is useless to us..)
     """
 
     _kwarg_names = (
@@ -235,7 +234,17 @@ _not_named_argument = object()
 
 
 @six.add_metaclass(_ParserHolderMeta)
-class ParserHolder(object):
+class _BaseParserHolder(object):
+    """
+    A base class for all the ParserHolders
+
+    I wanted to allow people to be able to choose between full ease of use, where you just create an instance of you
+    child class and it comes ready to use as in ParserHolder with no potential name conflict for the arguments you
+    added to it, and between exposing every interface you might need in ArgumentParser and giving you more control over
+    parsing, but with a bit stronger restriction on argument names (due to the added method names)
+
+    This class just holds the common code of those options.
+    """
 
     _description = _keep_default
 
@@ -284,7 +293,21 @@ class ParserHolder(object):
         # 1) The first arguments will come from the child class and then from the parents left to right
         # 2) The first arguments will come from the parents right to left and from the child class and then
         # While the behaviour in the argparse library is parent left to right first and then the child arguments
+
+        """
+        The parser is not exposed since the name might be used for an argument and since direct usage will most likely
+        break things.
+        But if there is a missing feature in this implementation, or a bug that is possible to overcome by directly
+        using _parser, then nothing stops you from doing so.
+        Do note that you most likely can achieve what you want by implementing it in a subclass, instead of acessing
+        the instance's "_parser" variable.
+        """
         self._parser = self._get_argument_parser(add_help=self._add_help)
+
+    def _parse_args(self, args):
+        parsed_dict = vars(self._parser.parse_args(args=args))
+        self.__dict__.update(**parsed_dict)
+        return self
 
     @classmethod
     def _get_parent_argument_parsers(cls):
@@ -306,7 +329,7 @@ class ParserHolder(object):
         if cls._help is not None and add_help is _keep_default:
             add_help = False
 
-        parser_kwargs = cls.get_kwargs(name_prefix="_")
+        parser_kwargs = cls._get_kwargs(name_prefix="_")
 
         parser_kwargs["add_help"] = add_help
 
@@ -323,7 +346,8 @@ class ParserHolder(object):
     @classmethod
     def _add_argument(cls, parser, group_to_group_parser, argument, argument_name=_not_named_argument):
 
-        argument_kwargs = argument.get_kwargs()
+        # noinspection PyProtectedMember
+        argument_kwargs = argument._get_kwargs()
 
         if argument_name is not _not_named_argument:
             argument_kwargs["dest"] = argument_name
@@ -371,19 +395,42 @@ class ParserHolder(object):
 
         return parser
 
-    @property
-    def parser(self):
-        """
-        Exposes the inner parser object
 
-        Dangerous: Can easily break stuff, only use it if what you want to do can't be achieved otherwise
-        and you understand both the relevant code in xargparse and argparse.
-        """
-        return self._parser
+class ParserHolder(_BaseParserHolder):
+    """
+    This is the main class in the library and is used to replace the usage of ArgumentParser
+    You can add Arg variables and subclasses to a child class that you define, and the order that they were added
+    with will correspond to the order you would have called ArgumentParser.add_argument (Or whatever is relevant in
+    case you use groups etc..)
+    You can overwrite most of ArgumentParser.__init__ parameters by specifying the relevant parameter with an underscore
+    with a new value.
+    For example to overwrite "description" set the "_description" parameter in your child subclass to the desired value
+
+    Please do not use Arg parameters with names starting with an underscore since you might accidentally get name
+    conflicts with one of the functions or class variables defined in this class. and this is also not pythonic to
+    use such names for variables that you are planning to access outside of the class object.
+
+    The choice to make all variables in the class start with underscore was done to allow users to use whatever names
+    they want for their Arg variables (as long as they don't use underscores of course) without fear of conflicts.
+    Also there is not reason for a user to want to access those variables and methods outside of class definition.
+    """
+
+    def __init__(self, args=None):
+        super(ParserHolder, self).__init__()
+        self._parse_args(args=args)
+
+
+class ControlledParserHolder(_BaseParserHolder):
+    """
+    Use this class if you want to separate parsing for argument holding so that __init__ doesn't parse the arguments.
+    This is needed if you want to parse several times (different args sources, or tests) or if you need the
+    parse_known_args method.
+
+    Do note that using this class means that the added function names cannot be used as names for you arguments
+    """
 
     def parse_args(self, args=None):
-        parsed_dict = vars(self._parser.parse_args(args=args))
-        self.__dict__.update(**parsed_dict)
+        self._parse_args(args=args)
         return self
 
     def parse_known_args(self, args=None):
@@ -392,23 +439,37 @@ class ParserHolder(object):
         self.__dict__.update(**parsed_dict)
         return self, remainder
 
+
+class FullParserHolder(ControlledParserHolder):
+    """
+    This class gives you full access to all ArgumentParser methods and separates parsing from __init__ like
+    ControlledParserHolder.
+
+    Do note that using this class means that the added function names cannot be used as names for you arguments,
+    This could have been especially problematic for the "exit" and "error" names so we added an ending underscore for
+    those two to remedy that.
+    """
+
     def format_usage(self):
-        return self.parser.format_usage()
+        return self._parser.format_usage()
 
     def format_help(self):
-        return self.parser.format_help()
+        return self._parser.format_help()
 
     def print_usage(self, file=None):
-        return self.parser.print_usage(file=file)
+        return self._parser.print_usage(file=file)
 
     def print_help(self, file=None):
-        return self.parser.print_help(file=file)
+        return self._parser.print_help(file=file)
 
-    def exit(self, status=0, message=None):
-        return self.parser.exit(status=status, message=message)
+    def exit_(self, status=0, message=None):
+        return self._parser.exit(status=status, message=message)
 
-    def error(self, message=None):
-        return self.parser.error(message=message)
+    def error_(self, message=None):
+        return self._parser.error(message=message)
 
     def __repr__(self):
-        return "%s(%r)" % (self.__class__.__name__, {n: getattr(self, n) for n in self.__argument_names})
+        return "{class_name}({arguments})".format(
+            class_name=self.__class__.__name__,
+            arguments={k: v for k, v in self._sorted_arguments}
+        )
