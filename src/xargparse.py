@@ -4,7 +4,6 @@ Class based extension to argparse: https://docs.python.org/3/library/argparse.ht
 import argparse
 
 # Exposing all argparse here so that users don't have to import it as well.
-import collections
 import sys
 
 # noinspection PyUnresolvedReferences
@@ -38,12 +37,6 @@ import six
 # 2) 
 
 _keep_default = object()
-
-
-def _get_none_default_kwargs(containing_object, key_names, key_prefix=""):
-
-    all_kwarg_pairs = ((k, getattr(containing_object, key_prefix + k)) for k in key_names)
-    return {k: v for k, v in all_kwarg_pairs if v is not _keep_default}
 
 
 class SuppressError(ValueError):
@@ -80,13 +73,42 @@ class _Sortable(object):
         # and so both will raise the counter and will have the same index value, but internally the class arguments will
         # still have sorted different indexes..
         _Sortable._index_counter += 1
-        self.__instance_index__ = Arg._index_counter
+        self.instance_index = Arg._index_counter
 
 
+class _KwargsHolder(object):
+    """
+    An inner class used to hold keyword arguments for functions and classes that we don't want to immediately evaluate
+    """
+
+    _kwarg_names = ()
+
+    def get_kwargs(self, name_prefix=""):
+        all_kwarg_pairs = ((k, getattr(self, name_prefix + k)) for k in self._kwarg_names)
+        return {k: v for k, v in all_kwarg_pairs if v is not _keep_default}
+
+
+"""
+When default is not set the argparse would use None instead of [] or 0 in places where these value are far more 
+logical (a.k.a sane) if this is set to True we overwrite this "insane" behaviour.
+
+There was a dilemma of whether this change should be added or not, since we usually want to work as a one to one
+wrapper to argparse.
+But our goal is to achieve easy type friendly arguments, and with the old defaults it breaks that.
+The user can still define the argument with default=None if he wants that specific behaviour, but when nothing is 
+defined the new behaviour is used.
+
+This variable allows us to change the behaviour of this library to be more strict in that matter, we can also add
+an overwrite in a class and/or in an instance level of ArgumentHolder, but I see no reason to do so right now.
+"""
 USE_SANE_DEFAULTS = True
 
 
-class Arg(_Sortable):
+class Arg(_Sortable, _KwargsHolder):
+
+    _kwarg_names = (
+        "action", "nargs", "const", "default", "type", "choices", "required", "help", "metavar", "version"
+    )
 
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -119,9 +141,8 @@ class Arg(_Sortable):
         self.version = version
 
         self.group = group
-
         self._default = default  # This is overwritten by the next line, and is only set to make the ide happy.
-        self.default = default  # Keep at the end since the setter does sensitization that depends on the other values
+        self.default = default  # Keep at the end since the setter does checks that can depend on the other values
 
     @property
     def default(self):
@@ -136,15 +157,15 @@ class Arg(_Sortable):
         if value == SUPPRESS:
             raise SuppressError()
 
-    def get_saner_default(self, old_default):
-
-        if old_default is _keep_default:
+        if USE_SANE_DEFAULTS and value is _keep_default:
 
             if self.action == ActionName.append or self.nargs == "*" or self.nargs == "+" or self.nargs == REMAINDER:
-                return []
+                value = []
 
             if self.action == ActionName.count:
-                return 0
+                value = 0
+
+        self._default = value
 
 
 class HelpArg(Arg):
@@ -186,17 +207,34 @@ class ArgumentGroup(object):
         self.description = description
 
 
-class ParserHolderMeta(type):
+class _ParserHolderMeta(type, _KwargsHolder):
+    """
+    We use this meta class for two reasons:
+    1) To give our classes the _sorted_arguments variable that allows to get only the _Sortable variables defined in
+       the class (and not in the parents). We use __new__ to do that and it allows us to easily implement proper
+       ArgumentParser.parents behaviour in our __init__ method
+    2) To define all the parser variables in a way that is only accessible to the class and not to the instance.
+       this will allow the
+
+    """
+
+    _kwarg_names = (
+        "description", "prog", "usage", "epilog", "formatter_class", "prefix_chars", "fromfile_prefix_chars",
+        "argument_default", "conflict_handler", "add_help"
+    )
 
     def __new__(mcs, name, bases, attrs):
 
         _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, Arg))
-        attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1].__instance_index__))
+        attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1].instance_index))
 
-        return super(ParserHolderMeta, mcs).__new__(mcs, name, bases, attrs)
+        return super(_ParserHolderMeta, mcs).__new__(mcs, name, bases, attrs)
 
 
-@six.add_metaclass(ParserHolderMeta)
+_not_named_argument = object()
+
+
+@six.add_metaclass(_ParserHolderMeta)
 class ParserHolder(object):
 
     _description = _keep_default
@@ -218,26 +256,23 @@ class ParserHolder(object):
     """ Change the parser class (Useful in cases where you would inherit and overwrite a method like """
     _parser_class = argparse.ArgumentParser
 
-    """ Overwrite to add a help argument manually """
+    """ 
+    Overwrite to add a help argument manually
+    Set it to a string to get a default HelpArg with the help parameter set to this string
+    Set it to a HelpArg for more control
+    You can also use Arg but that is less comfortable, more error prone and should not be necessary since HelpArg
+    is built in a way that is supposed to let you achieve everything that is possible with this type of arguments
+    """
     _help = None
 
-    """ Overwrite to add a version argument manually """
+    """ 
+    Overwrite to add a version argument manually
+    Set it to a string to get a default VersionArg with the version parameter set to this string
+    Set it to a VersionArg for more control
+    You can also use Arg but that is less comfortable, more error prone and should not be necessary since VersionArg
+    is built in a way that is supposed to let you achieve everything that is possible with this type of arguments
+    """
     _version = None
-
-    """
-    When default is not set the argparse would use None instead of [] or 0 in places where these value are far more
-    logical (a.k.a sane) if this is set to True we overwrite this insane behaviour..
-    """
-    _use_sane_defaults = USE_SANE_DEFAULTS
-
-    __argument_parser_kwarg_names = (
-        "prog", "usage", "description", "epilog", "formatter_class", "prefix_chars", "fromfile_prefix_chars",
-        "argument_default", "conflict_handler"
-    )
-
-    __argument_kwarg_names = (
-        "action", "nargs", "const", "type", "choices", "required", "help", "metavar", "version"
-    )
 
     def __init__(self):
 
@@ -252,16 +287,18 @@ class ParserHolder(object):
         self._parser = self._get_argument_parser(add_help=self._add_help)
 
     @classmethod
-    def _get_argument_parser(cls, add_help):
+    def _get_parent_argument_parsers(cls):
 
         # There is no super call here, see why in the comment in the __init__ function
-        def get_parents():
-            for base in cls.__bases__:
-                try:
-                    # noinspection PyUnresolvedReferences,PyProtectedMember
-                    yield base._get_argument_parser(add_help=False)
-                except AttributeError:
-                    pass
+        for base in cls.__bases__:
+            try:
+                # noinspection PyUnresolvedReferences,PyProtectedMember
+                yield base._get_argument_parser(add_help=False)
+            except AttributeError:
+                pass
+
+    @classmethod
+    def _get_base_argument_parser(cls, add_help):
 
         if cls._argument_default == SUPPRESS:
             raise SuppressError()
@@ -269,62 +306,68 @@ class ParserHolder(object):
         if cls._help is not None and add_help is _keep_default:
             add_help = False
 
+        parser_kwargs = cls.get_kwargs(name_prefix="_")
+
+        parser_kwargs["add_help"] = add_help
+
         allow_abbrev = cls._allow_abbrev
         if sys.version_info.major < 3 or (sys.version_info.major == 3 and sys.version_info.minor < 5):
             allow_abbrev = _keep_default
-
-        parser_kwargs = _get_none_default_kwargs(cls, cls.__argument_parser_kwarg_names, key_prefix="_")
-        parser_kwargs["add_help"] = add_help
         if allow_abbrev is not _keep_default:
             parser_kwargs["allow_abbrev"] = allow_abbrev
-        parser_kwargs["parents"] = get_parents()
 
-        parser = cls._parser_class(**parser_kwargs)
+        parser_kwargs["parents"] = cls._get_parent_argument_parsers()
+
+        return cls._parser_class(**parser_kwargs)
+
+    @classmethod
+    def _add_argument(cls, parser, group_to_group_parser, argument, argument_name=_not_named_argument):
+
+        argument_kwargs = argument.get_kwargs()
+
+        if argument_name is not _not_named_argument:
+            argument_kwargs["dest"] = argument_name
+
+        if argument.group is None:
+            add_argument_function = parser.add_argument
+        else:
+            if argument.group not in cls.__group_to_group_parser:
+                group_to_group_parser[argument.group] = parser.add_argument_group(
+                    title=argument.group.title, description=argument.group.description)
+            add_argument_function = group_to_group_parser[argument.group].add_argument
+
+        add_argument_function(*argument.flags, **argument_kwargs)
+
+    @classmethod
+    def _get_argument_parser(cls, add_help):
+
+        parser = cls._get_base_argument_parser(add_help=add_help)
 
         group_to_group_parser = {}
 
         for argument_name, argument in cls._sorted_arguments:
-
-            default = argument.default
-            if cls._use_sane_defaults:
-                default = argument.get_saner_default(old_default=default)
-
-            argument_kwargs = _get_none_default_kwargs(argument, cls.__argument_kwarg_names)
-            argument_kwargs["dest"] = argument_name
-            if default is not _keep_default:
-                argument_kwargs["default"] = default
-
-            if argument.group is None:
-                add_argument_function = parser.add_argument
-            else:
-                if argument.group not in group_to_group_parser:
-                    group_to_group_parser[argument.group] = parser.add_argument_group(
-                        title=argument.group.title, description=argument.group.description)
-                add_argument_function = group_to_group_parser[argument.group].add_argument
-
-            add_argument_function(*argument.flags, **argument_kwargs)
+            cls._add_argument(parser=parser, group_to_group_parser=group_to_group_parser,
+                              argument=argument, argument_name=argument_name)
 
         if cls._help is not None:
             if isinstance(cls._help, six.string_types):
-                cls._help = HelpArg(
+                help_argument = HelpArg(
                     *[a.format(p=parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
                     help=cls._help)
+            else:
+                help_argument = cls._help
 
-            argument_kwargs = _get_none_default_kwargs(cls._help, cls.__argument_kwarg_names)
-            argument_kwargs["dest"] = SUPPRESS
-
-            parser.add_argument(*cls._help.flags, **argument_kwargs)
+            cls._add_argument(parser=parser, group_to_group_parser=group_to_group_parser, argument=help_argument)
 
         if cls._version is not None:
             if isinstance(cls._version, six.string_types):
-                cls._version = VersionArg(
+                version_argument = VersionArg(
                     *[a.format(p=parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
                     version=cls._version)
+            else:
+                version_argument = cls._version
 
-            argument_kwargs = _get_none_default_kwargs(cls._version, cls.__argument_kwarg_names)
-            argument_kwargs["dest"] = SUPPRESS
-
-            parser.add_argument(*cls._version.flags, **argument_kwargs)
+            cls._add_argument(parser=parser, group_to_group_parser=group_to_group_parser, argument=version_argument)
 
         return parser
 
