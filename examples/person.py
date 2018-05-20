@@ -1,6 +1,6 @@
 from enum import Enum, auto, unique
 
-from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup
+from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, SubCommandArg
 
 
 # noinspection PyCompatibility
@@ -48,7 +48,15 @@ class PropertyInfo(ParserHolder):
 
 
 # noinspection PyCompatibility
-class Arguments(PersonInfo, PropertyInfo):
+class SubCommand(ParserHolder):
+
+    bla: str = Arg(help="bla??")
+
+
+# noinspection PyCompatibility
+class Person(ParserHolder):
+
+    sub_command = SubCommandArg(SubCommand)
 
     _version = "v1.0.0.0"
     _help = "Super help message!!!"
@@ -56,6 +64,5 @@ class Arguments(PersonInfo, PropertyInfo):
 
 if __name__ == "__main__":
 
-    args = Arguments()
-
+    args = Person(["sub_command", "yad"])
     print(args)
