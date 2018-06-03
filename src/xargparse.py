@@ -39,6 +39,20 @@ import six
 _keep_default = object()
 
 
+def _argument_call_patch(argument_instance, argument_holder):
+
+    parent = type(argument_instance)
+
+    class Replacer(parent):
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            del namespace
+            return super(Replacer, self).__call__(parser, argument_holder, values, option_string)
+
+    Replacer.__name__ = parent.__name__
+    argument_instance.__class__ = Replacer
+
+
 class SuppressError(ValueError):
     def __init__(self):
         super(SuppressError, self).__init__(
@@ -73,7 +87,7 @@ class _Sortable(object):
         # and so both will raise the counter and will have the same index value, but internally the class arguments will
         # still have sorted different indexes..
         _Sortable._index_counter += 1
-        self.instance_index = Arg._index_counter
+        self._instance_index = _Sortable._index_counter
 
 
 class _KwargsHolder(object):
@@ -82,9 +96,10 @@ class _KwargsHolder(object):
     """
 
     _kwarg_names = ()
+    _kwargs_name_prefix = ""
 
-    def _get_kwargs(self, name_prefix=""):
-        all_kwarg_pairs = ((k, getattr(self, name_prefix + k)) for k in self._kwarg_names)
+    def _get_kwargs(self):
+        all_kwarg_pairs = ((k, getattr(self, self._kwargs_name_prefix + k)) for k in self._kwarg_names)
         return {k: v for k, v in all_kwarg_pairs if v is not _keep_default}
 
 
@@ -211,7 +226,7 @@ class ArgumentGroup(object):
         self.description = description
 
 
-class SubParser(_KwargsHolder):
+class SubParserConfig(_KwargsHolder):
 
     _kwarg_names = (
         "title", "description", "prog", "parser_class", "action", "option_string", "help", "metavar",
@@ -231,27 +246,10 @@ class SubParser(_KwargsHolder):
         self.description = description
         self.prog = prog
         self.parser_class = parser_class
-        self.parser_class = parser_class
         self.action = action
         self.option_string = option_string
         self.help = help
         self.metavar = metavar
-
-
-class SubCommandArg(_BaseArg):
-
-    _kwarg_names = (
-        "prog", "aliases", "help",
-    )
-
-    # noinspection PyShadowingBuiltins
-    def __init__(self, holder_class, prog=_keep_default, aliases=_keep_default, help=_keep_default):
-        super(SubCommandArg, self).__init__()
-
-        self.holder_class = holder_class
-        self.prog = prog
-        self.aliases = aliases
-        self.help = help
 
 
 class _ParserHolderMeta(type, _KwargsHolder):
@@ -268,28 +266,33 @@ class _ParserHolderMeta(type, _KwargsHolder):
         "description", "prog", "usage", "epilog", "formatter_class", "prefix_chars", "fromfile_prefix_chars",
         "argument_default", "conflict_handler", "add_help"
     )
+    _kwargs_name_prefix = "_"
 
     def __new__(mcs, name, bases, attrs):
 
-        _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, _BaseArg))
-        attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1].instance_index))
+        _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, _Sortable))
+        # noinspection PyProtectedMember
+        attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1]._instance_index))
 
         return super(_ParserHolderMeta, mcs).__new__(mcs, name, bases, attrs)
-
-
-class _ParserWrapper(object):
-
-    def __init__(self, parser):
-        self.parser = parser
-        self.group_to_group_parser = {}
-        self.subparser = None
 
 
 _not_named_argument = object()
 
 
+class SubParserKwargs(_KwargsHolder):
+
+    _kwarg_names = ("prog", "aliases", "help")
+
+    # noinspection PyShadowingBuiltins
+    def __init__(self, prog, aliases, help):
+        self.prog = prog
+        self.aliases = aliases
+        self.help = help
+
+
 @six.add_metaclass(_ParserHolderMeta)
-class _BaseParserHolder(object):
+class ParserHolder(_Sortable):
     """
     A base class for all the ParserHolders
 
@@ -345,9 +348,24 @@ class _BaseParserHolder(object):
     called without arguments.
     You should only supply a SubParser argument here, or leave it as None.
     """
-    _subparser = None
+    _subparser_config = None
 
-    def __init__(self):
+    # noinspection PyShadowingBuiltins
+    def __init__(self, prog=_keep_default, aliases=_keep_default, help=_keep_default, _add_help=None, _namespace=None):
+        """
+        :param prog: When initiated as a subparser it is used to set the prog argument, ignored otherwise
+        :param aliases: When initiated as a subparser it is used to set the aliases argument, ignored otherwise
+        :param help: When initiated as a subparser it is used to set the help argument, ignored otherwise
+        :param _add_help: Used internally, Setting this will overwrite the class parameter but using this parameter
+                          like that should be avoided.
+        :param _namespace: Used internally, we pass self to parent class using this argument to make sure they add
+                           parameters to this object, and not to the temporary parent instance.
+        """
+
+        super(ParserHolder, self).__init__()
+
+        # noinspection PyProtectedMember
+        self._subparser_kwargs = SubParserKwargs(prog=prog, aliases=aliases, help=help)._get_kwargs()
 
         # We never call super __init__, this choice escapes the MRO which is usually not a good idea, but in our
         # case the MRO will not function for the most simple (and probably common) usage of parents that we try to
@@ -365,58 +383,120 @@ class _BaseParserHolder(object):
         using _parser, then nothing stops you from doing so.
         Do note that you most likely can achieve what you want by implementing it in a subclass, instead of acessing
         the instance's "_parser" variable.
+        
+        Note that in subparser mode this parameter will be overwritten, but add it in init to make auto completion
+        and type checking work better.
         """
-        self._parser = self._get_argument_parser(add_help=self._add_help)
 
-    def _parse_args(self, args):
-        parsed_dict = vars(self._parser.parse_args(args=args))
-        self.__dict__.update(**parsed_dict)
-        return self
+        if _add_help is None:
+            _add_help = self._add_help
 
-    @classmethod
-    def _get_parent_argument_parsers(cls):
+        if _namespace is None:
+            _namespace = self
+        self._namespace = _namespace
 
-        # There is no super call here, see why in the comment in the __init__ function
-        for base in cls.__bases__:
-            if hasattr(base, "_get_argument_parser"):
-                # noinspection PyUnresolvedReferences,PyProtectedMember
-                yield base._get_argument_parser(add_help=False)
+        self._parser_kwargs = self._get_parser_kwargs(add_help=_add_help)
+        self._parser = self._parser_class(**self._parser_kwargs)
 
-    @classmethod
-    def _get_base_argument_parser(cls, add_help, parser_creator_function, parser_creator_kwargs):
+        self._group_to_group_parser = {}
+        self._subparser = None
 
-        if parser_creator_function is None:
-            parser_creator_function = cls._parser_class
+    def _get_parser_kwargs(self, add_help):
 
-        if cls._argument_default == SUPPRESS:
+        if self._argument_default == SUPPRESS:
             raise SuppressError()
 
-        if parser_creator_kwargs is None:
-            base_kwargs = {}
-        else:
-            base_kwargs = parser_creator_kwargs
+        # noinspection PyProtectedMember
+        parser_kwargs = self.__class__._get_kwargs()
 
-        parser_kwargs = cls._get_kwargs(name_prefix="_")
-
-        if cls._help is not None and add_help is _keep_default:
+        if self._help is not None and add_help is _keep_default:
             add_help = False
         if add_help is not _keep_default:
             parser_kwargs["add_help"] = add_help
 
-        allow_abbrev = cls._allow_abbrev
+        allow_abbrev = self._allow_abbrev
         if sys.version_info.major < 3 or (sys.version_info.major == 3 and sys.version_info.minor < 5):
             allow_abbrev = _keep_default
         if allow_abbrev is not _keep_default:
             parser_kwargs["allow_abbrev"] = allow_abbrev
 
-        parser_kwargs["parents"] = list(cls._get_parent_argument_parsers())
+        parser_kwargs["parents"] = list(self._get_parent_argument_parsers())
 
-        base_kwargs.update(**parser_kwargs)
+        return parser_kwargs
 
-        return parser_creator_function(**base_kwargs)
+    def _get_parent_argument_parsers(self):
 
-    @classmethod
-    def _add_argument(cls, parser_wrapper, argument, argument_name=_not_named_argument):
+        # There is no super call here, see why in the comment in the __init__ function
+        for base in self.__class__.__bases__:
+            if hasattr(base, "_sorted_arguments"):
+                parent_holder = base(_add_help=False, _namespace=self._namespace)
+                # noinspection PyProtectedMember
+                parent_holder._fill_parser()
+
+                # noinspection PyProtectedMember
+                for action in parent_holder._parser._actions:
+                    if action.dest is not SUPPRESS and action.default is not SUPPRESS:
+                        setattr(self._namespace, action.dest, action.default)
+
+                # noinspection PyProtectedMember
+                for dest, value in parent_holder._parser._defaults.items():
+                    setattr(self._namespace, dest, value)
+
+                # noinspection PyProtectedMember
+                yield parent_holder._parser
+
+    def _fill_parser(self):
+
+        for argument_name, argument in self._sorted_arguments:
+            if isinstance(argument, ParserHolder):
+                self._add_subparser(argument=argument, argument_name=argument_name)
+            else:
+                self._add_argument(argument=argument, argument_name=argument_name)
+
+        if self._help is not None:
+            if isinstance(self._help, six.string_types):
+                help_argument = HelpArg(
+                    *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
+                    help=self._help)
+            else:
+                help_argument = self._help
+
+            self._add_argument(argument=help_argument)
+
+        if self._version is not None:
+            if isinstance(self._version, six.string_types):
+                version_argument = VersionArg(
+                    *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
+                    version=self._version)
+            else:
+                version_argument = self._version
+
+            self._add_argument(argument=version_argument)
+
+    def _add_subparser(self, argument, argument_name):
+
+        # todo: Add magic for the subparser to be able to write straight to the parser object..
+
+        if self._subparser is None:
+            if self._subparser_config is None:
+                subparser_config = SubParserConfig()
+            else:
+                subparser_config = self._subparser_config
+            # noinspection PyProtectedMember
+            subparser_config_kwargs = subparser_config._get_kwargs()
+            self._subparser = self._parser.add_subparsers(**subparser_config_kwargs)
+
+        # noinspection PyProtectedMember
+        add_parser_kwargs = dict(argument._parser_kwargs)
+        # noinspection PyProtectedMember
+        add_parser_kwargs.update(argument._subparser_kwargs)
+
+        argument._parser = self._subparser.add_parser(argument_name, **add_parser_kwargs)
+
+        # noinspection PyProtectedMember
+        argument._fill_parser()
+
+    def _add_argument(self, argument, argument_name=_not_named_argument):
 
         # noinspection PyProtectedMember
         argument_kwargs = argument._get_kwargs()
@@ -425,128 +505,33 @@ class _BaseParserHolder(object):
             argument_kwargs["dest"] = argument_name
 
         if argument.group is None:
-            add_argument_function = parser_wrapper.parser.add_argument
+            add_argument_function = self._parser.add_argument
         else:
-            if argument.group not in parser_wrapper.group_to_group_parser:
-                parser_wrapper.group_to_group_parser[argument.group] = parser_wrapper.parser.add_argument_group(
+            if argument.group not in self._group_to_group_parser:
+                self._group_to_group_parser[argument.group] = self._parser.add_argument_group(
                     title=argument.group.title, description=argument.group.description)
-            add_argument_function = parser_wrapper.group_to_group_parser[argument.group].add_argument
+            add_argument_function = self._group_to_group_parser[argument.group].add_argument
 
-        add_argument_function(*argument.flags, **argument_kwargs)
+        # noinspection PyNoneFunctionAssignment
+        argument = add_argument_function(*argument.flags, **argument_kwargs)
+        # noinspection PyTypeChecker
+        _argument_call_patch(argument, self._namespace)
 
-    @classmethod
-    def _add_subparser(cls, parser_wrapper, argument, argument_name):
-
-        if parser_wrapper.subparser is None:
-            if cls._subparser is None:
-                subparser_config = SubParser()
-            else:
-                subparser_config = cls._subparser
-            # noinspection PyProtectedMember
-            subparser_kwargs = subparser_config._get_kwargs()
-            parser_wrapper.subparser = parser_wrapper.parser.add_subparsers(**subparser_kwargs)
-
-        # noinspection PyProtectedMember
-        argument_kwargs = argument._get_kwargs()
-
-        # noinspection PyProtectedMember
-        argument.holder_class._get_argument_parser(
-            add_help=False,
-            parser_creator_function=lambda **kwargs: parser_wrapper.subparser.add_parser(argument_name, **kwargs),
-            parser_creator_kwargs=argument_kwargs)
-
-    @classmethod
-    def _get_argument_parser(cls, add_help, parser_creator_function=None, parser_creator_kwargs=None):
-
-        parser = cls._get_base_argument_parser(
-            add_help=add_help,
-            parser_creator_function=parser_creator_function,
-            parser_creator_kwargs=parser_creator_kwargs)
-
-        parser_wrapper = _ParserWrapper(parser)
-
-        for argument_name, argument in cls._sorted_arguments:
-            if isinstance(argument, SubCommandArg):
-                cls._add_subparser(parser_wrapper=parser_wrapper, argument=argument, argument_name=argument_name)
-            else:
-                cls._add_argument(parser_wrapper=parser_wrapper, argument=argument, argument_name=argument_name)
-
-        if cls._help is not None:
-            if isinstance(cls._help, six.string_types):
-                help_argument = HelpArg(
-                    *[a.format(p=parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
-                    help=cls._help)
-            else:
-                help_argument = cls._help
-
-            cls._add_argument(parser_wrapper=parser_wrapper, argument=help_argument)
-
-        if cls._version is not None:
-            if isinstance(cls._version, six.string_types):
-                version_argument = VersionArg(
-                    *[a.format(p=parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
-                    version=cls._version)
-            else:
-                version_argument = cls._version
-
-            cls._add_argument(parser_wrapper=parser_wrapper, argument=version_argument)
-
-        return parser
-
-
-class ParserHolder(_BaseParserHolder):
-    """
-    This is the main class in the library and is used to replace the usage of ArgumentParser
-    You can add Arg variables and subclasses to a child class that you define, and the order that they were added
-    with will correspond to the order you would have called ArgumentParser.add_argument (Or whatever is relevant in
-    case you use groups etc..)
-    You can overwrite most of ArgumentParser.__init__ parameters by specifying the relevant parameter with an underscore
-    with a new value.
-    For example to overwrite "description" set the "_description" parameter in your child subclass to the desired value
-
-    Please do not use Arg parameters with names starting with an underscore since you might accidentally get name
-    conflicts with one of the functions or class variables defined in this class. and this is also not pythonic to
-    use such names for variables that you are planning to access outside of the class object.
-
-    The choice to make all variables in the class start with underscore was done to allow users to use whatever names
-    they want for their Arg variables (as long as they don't use underscores of course) without fear of conflicts.
-    Also there is not reason for a user to want to access those variables and methods outside of class definition.
-    """
-
-    def __init__(self, args=None):
-        super(ParserHolder, self).__init__()
-        self._parse_args(args=args)
-
-
-class ControlledParserHolder(_BaseParserHolder):
-    """
-    Use this class if you want to separate parsing for argument holding so that __init__ doesn't parse the arguments.
-    This is needed if you want to parse several times (different args sources, or tests) or if you need the
-    parse_known_args method.
-
-    Do note that using this class means that the added function names cannot be used as names for you arguments
-    """
+    def __repr__(self):
+        # We can do better here, but for now its mostly a debugging functionality
+        names = [n for n in self.__dict__ if not n.startswith("_")]
+        variables = ", ".join("%s=%s" % (n, getattr(self, n)) for n in sorted(names))
+        return "%s(%s)" % (type(self).__name__, variables)
 
     def parse_args(self, args=None):
-        self._parse_args(args=args)
+        self._fill_parser()
+        self._parser.parse_args(args=args)
         return self
 
     def parse_known_args(self, args=None):
-        result, remainder = self._parser.parse_known_args(args=args)
-        parsed_dict = vars(result)
-        self.__dict__.update(**parsed_dict)
+        self._fill_parser()
+        _, remainder = self._parser.parse_known_args(args=args)
         return self, remainder
-
-
-class FullParserHolder(ControlledParserHolder):
-    """
-    This class gives you full access to all ArgumentParser methods and separates parsing from __init__ like
-    ControlledParserHolder.
-
-    Do note that using this class means that the added function names cannot be used as names for you arguments,
-    This could have been especially problematic for the "exit" and "error" names so we added an ending underscore for
-    those two to remedy that.
-    """
 
     def format_usage(self):
         return self._parser.format_usage()
@@ -565,9 +550,3 @@ class FullParserHolder(ControlledParserHolder):
 
     def error_(self, message=None):
         return self._parser.error(message=message)
-
-    def __repr__(self):
-        return "{class_name}({arguments})".format(
-            class_name=self.__class__.__name__,
-            arguments={k: v for k, v in self._sorted_arguments}
-        )
