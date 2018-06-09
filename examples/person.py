@@ -56,6 +56,8 @@ class SubCommand(ParserHolder):
 # noinspection PyCompatibility
 class Person(PersonInfo, PropertyInfo):
 
+    _description = "Person Class"
+
     sub = SubCommand()
 
     _version = "v1.0.0.0"
@@ -64,5 +66,11 @@ class Person(PersonInfo, PropertyInfo):
 
 if __name__ == "__main__":
 
-    args = Person().parse_args(["leon", "vaiman", "29", "male", "gorodisky", "--no-cats", "sub", "1"])
+    args = Person()
+    try:
+        print(args.has_cats)
+    except AttributeError:
+        pass
+    args.parse_args(["leon", "vaiman", "29", "male", "gorodisky", "--no-cats", "sub", "1"])
+    print(args.has_cats)
     print(args)

@@ -53,6 +53,31 @@ def _argument_call_patch(argument_instance, argument_holder):
     argument_instance.__class__ = Replacer
 
 
+def _subparser_call_patch(argument_instance, argument_holder):
+
+    parent = type(argument_instance)
+
+    class Replacer(parent):
+
+        def __call__(self, parser, namespace, values, option_string=None):
+
+            alias = values[0]
+            alias_to_name = getattr(self, "__alias_to_name")
+            name_to_namespace = getattr(self, "__name_to_namespace")
+
+            # Set all parsers to None, only the one that was chosen will get overwritten
+            for name in six.viewkeys(name_to_namespace):
+                setattr(argument_holder, name, None)
+
+            name = alias_to_name[alias]
+            setattr(argument_holder, name, name_to_namespace[name])
+
+            return super(Replacer, self).__call__(parser, namespace, values, option_string)
+
+    Replacer.__name__ = parent.__name__
+    argument_instance.__class__ = Replacer
+
+
 class SuppressError(ValueError):
     def __init__(self):
         super(SuppressError, self).__init__(
@@ -89,6 +114,8 @@ class _Sortable(object):
         _Sortable._index_counter += 1
         self._instance_index = _Sortable._index_counter
 
+        super(_Sortable, self).__init__()
+
 
 class _KwargsHolder(object):
     """
@@ -97,10 +124,35 @@ class _KwargsHolder(object):
 
     _kwarg_names = ()
     _kwargs_name_prefix = ""
+    _kwargs_name_postfix = ""
 
     def _get_kwargs(self):
-        all_kwarg_pairs = ((k, getattr(self, self._kwargs_name_prefix + k)) for k in self._kwarg_names)
+        class_ = type(self)
+        all_kwarg_pairs = ((k, getattr(self, class_._kwargs_name_prefix + k)) for k in class_._kwarg_names)
         return {k: v for k, v in all_kwarg_pairs if v is not _keep_default}
+
+
+class _ParsedProperty(object):
+    """
+    Implements __get__ and __set__ methods that make sure that we don't access an instance of this class
+    that wasn't parsed (aka __set__) first..
+    """
+
+    def __init__(self):
+
+        self._instance_to_value = {}
+
+        super(_ParsedProperty, self).__init__()
+
+    def __get__(self, instance, owner):
+
+        if instance not in self._instance_to_value:
+            raise AttributeError("Tried to access an unparsed property")
+
+        return self._instance_to_value[instance]
+
+    def __set__(self, instance, value):
+        self._instance_to_value[instance] = value
 
 
 """
@@ -119,8 +171,15 @@ an overwrite in a class and/or in an instance level of ArgumentHolder, but I see
 USE_SANE_DEFAULTS = True
 
 
-class _BaseArg(_Sortable, _KwargsHolder):
-    pass
+class _BaseArg(_Sortable, _ParsedProperty, _KwargsHolder):
+
+    def __repr__(self):
+        # We can do better here, but for now its mostly a debugging functionality
+        names = (n for n in dir(self) if not n.startswith("_"))
+        name_and_values_full = ((n, getattr(self, n, "NOT PARSED")) for n in names)
+        name_and_values = ((n, v) for n, v in name_and_values_full if not callable(v))
+        variables = ", ".join("%s=%r" % (n, v) for n, v in sorted(name_and_values, key=lambda nv: nv[0]))
+        return "%s(%s)" % (type(self).__name__, variables)
 
 
 class Arg(_BaseArg):
@@ -270,7 +329,7 @@ class _ParserHolderMeta(type, _KwargsHolder):
 
     def __new__(mcs, name, bases, attrs):
 
-        _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, _Sortable))
+        _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, _BaseArg))
         # noinspection PyProtectedMember
         attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1]._instance_index))
 
@@ -280,19 +339,8 @@ class _ParserHolderMeta(type, _KwargsHolder):
 _not_named_argument = object()
 
 
-class SubParserKwargs(_KwargsHolder):
-
-    _kwarg_names = ("prog", "aliases", "help")
-
-    # noinspection PyShadowingBuiltins
-    def __init__(self, prog, aliases, help):
-        self.prog = prog
-        self.aliases = aliases
-        self.help = help
-
-
 @six.add_metaclass(_ParserHolderMeta)
-class ParserHolder(_Sortable):
+class ParserHolder(_BaseArg):
     """
     A base class for all the ParserHolders
 
@@ -350,6 +398,10 @@ class ParserHolder(_Sortable):
     """
     _subparser_config = None
 
+    # Used when the holder is used as an argument
+    _kwarg_names = ("prog", "aliases", "help")
+    _kwargs_name_prefix = "__"
+
     # noinspection PyShadowingBuiltins
     def __init__(self, prog=_keep_default, aliases=_keep_default, help=_keep_default, _add_help=None, _namespace=None):
         """
@@ -365,7 +417,9 @@ class ParserHolder(_Sortable):
         super(ParserHolder, self).__init__()
 
         # noinspection PyProtectedMember
-        self._subparser_kwargs = SubParserKwargs(prog=prog, aliases=aliases, help=help)._get_kwargs()
+        setattr(self, "__prog", prog)
+        setattr(self, "__aliases", aliases)
+        setattr(self, "__help", help)
 
         # We never call super __init__, this choice escapes the MRO which is usually not a good idea, but in our
         # case the MRO will not function for the most simple (and probably common) usage of parents that we try to
@@ -406,8 +460,9 @@ class ParserHolder(_Sortable):
         if self._argument_default == SUPPRESS:
             raise SuppressError()
 
-        # noinspection PyProtectedMember
-        parser_kwargs = self.__class__._get_kwargs()
+        class_ = type(self)
+        # noinspection PyUnresolvedReferences,PyProtectedMember
+        parser_kwargs = class_._get_kwargs(self)
 
         if self._help is not None and add_help is _keep_default:
             add_help = False
@@ -434,18 +489,18 @@ class ParserHolder(_Sortable):
                 parent_holder._fill_parser()
 
                 # noinspection PyProtectedMember
-                for action in parent_holder._parser._actions:
-                    if action.dest is not SUPPRESS and action.default is not SUPPRESS:
-                        setattr(self._namespace, action.dest, action.default)
-
-                # noinspection PyProtectedMember
-                for dest, value in parent_holder._parser._defaults.items():
-                    setattr(self._namespace, dest, value)
-
-                # noinspection PyProtectedMember
                 yield parent_holder._parser
 
     def _fill_parser(self):
+
+        # noinspection PyProtectedMember,PyUnresolvedReferences
+        for action in self._parser._actions:
+            if action.dest is not SUPPRESS and action.default is not SUPPRESS:
+                setattr(self._namespace, action.dest, action.default)
+
+        # noinspection PyProtectedMember,PyUnresolvedReferences
+        for dest, value in self._parser._defaults.items():
+            setattr(self._namespace, dest, value)
 
         for argument_name, argument in self._sorted_arguments:
             if isinstance(argument, ParserHolder):
@@ -486,12 +541,24 @@ class ParserHolder(_Sortable):
             subparser_config_kwargs = subparser_config._get_kwargs()
             self._subparser = self._parser.add_subparsers(**subparser_config_kwargs)
 
+            setattr(self._subparser, "__alias_to_name", {})
+            setattr(self._subparser, "__name_to_namespace", {})
+
+            _subparser_call_patch(self._subparser, self._namespace)
+
         # noinspection PyProtectedMember
         add_parser_kwargs = dict(argument._parser_kwargs)
         # noinspection PyProtectedMember
-        add_parser_kwargs.update(argument._subparser_kwargs)
+        add_parser_kwargs.update(argument._get_kwargs())
 
         argument._parser = self._subparser.add_parser(argument_name, **add_parser_kwargs)
+
+        alias_to_name = getattr(self._subparser, "__alias_to_name")
+        name_to_namespace = getattr(self._subparser, "__name_to_namespace")
+        name_to_namespace[argument_name] = argument
+        alias_to_name[argument_name] = argument_name
+        for alias in add_parser_kwargs.get("aliases", []):
+            alias_to_name[alias] = argument_name
 
         # noinspection PyProtectedMember
         argument._fill_parser()
@@ -516,12 +583,6 @@ class ParserHolder(_Sortable):
         argument = add_argument_function(*argument.flags, **argument_kwargs)
         # noinspection PyTypeChecker
         _argument_call_patch(argument, self._namespace)
-
-    def __repr__(self):
-        # We can do better here, but for now its mostly a debugging functionality
-        names = [n for n in self.__dict__ if not n.startswith("_")]
-        variables = ", ".join("%s=%s" % (n, getattr(self, n)) for n in sorted(names))
-        return "%s(%s)" % (type(self).__name__, variables)
 
     def parse_args(self, args=None):
         self._fill_parser()
