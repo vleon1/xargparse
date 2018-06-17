@@ -6,38 +6,41 @@ import argparse
 # Exposing all argparse here so that users don't have to import it as well.
 import sys
 
-# noinspection PyUnresolvedReferences
 from argparse import *
 
 import six
 
 
 # todo:
-# sub command (add_defaults..)
+# * Add SubParserMapper, a class that takes subparser name, and value in case it is chosen, implemented by set_default
+#   or maybe even better by _subparser_call_patch
 
-# help, version common code refactor
-# exceptions refactor
-# is there a better way to do sub-commands?
-# is there a better way to do argument groups?
-# should we somehow separate the Argument result class from the parser class (can we?)
-# Can we find a better name than ParserHolder
+# * help, version common code refactor
+# * exceptions refactor
+# * Can we find a better name than ParserHolder
+# * think about names
+# * order!
 
-# types
-# docstrings
-# order!
-# think about names
+# * types
+# * docstrings
 
 # changes list
-# 1) sane defaults...
-# 2) No parents argument for parser, inheritance is a perfect and working replacement
-# 3) added set_default
+# * USE_SANE_DEFAULTS
+# * No parents argument for parser, inheritance is a perfect and working replacement
+# * added set_default, they must overwrite something that exist, not recommended to use
+# * SubCommand has a sub item that holds stuff instead of setting the parent, SubParserMapper, SubParserConfig
+# * Args type to allow multi args setting
+# * New Exceptions (SuppressError)
+# * added ActionName
+# * The way we set parser properties (like _description) and the HelpArg and versionArg
+# * The way we handle ArgumentGroup and MutuallyExclusiveGroup
 
 # tests:
-# 1) Inherit twice from two classes with different orders, output strings should differ
-# 2) 
+# * Inherit twice from two classes with different orders, output strings should differ
+# * Make sure we see Set and see Description
 
-# readme
-# pypi
+# * readme
+# * pypi
 
 
 _keep_default = object()
@@ -473,7 +476,7 @@ class ParserHolder(_BaseArg):
         break things.
         But if there is a missing feature in this implementation, or a bug that is possible to overcome by directly
         using _parser, then nothing stops you from doing so.
-        Do note that you most likely can achieve what you want by implementing it in a subclass, instead of acessing
+        Do note that you most likely can achieve what you want by implementing it in a subclass, instead of accessing
         the instance's "_parser" variable.
         
         Note that in subparser mode this parameter will be overwritten, but add it in init to make auto completion
@@ -499,8 +502,8 @@ class ParserHolder(_BaseArg):
             raise SuppressError()
 
         class_ = type(self)
-        # noinspection PyUnresolvedReferences,PyProtectedMember
-        parser_kwargs = class_._get_kwargs(self)
+        # noinspection PyProtectedMember,PyCallByClass,PyTypeChecker
+        parser_kwargs = class_._get_kwargs(class_)
 
         if self._help is not None and add_help is _keep_default:
             add_help = False
@@ -553,6 +556,9 @@ class ParserHolder(_BaseArg):
                 self._add_subparser(argument=argument, argument_name=argument_name)
             elif isinstance(argument, Args):
                 for group_argument in argument.args:
+                    if not isinstance(group_argument, Arg):
+                        raise ValueError(
+                            "Unsupported argument type '%s' inside '%s'" % (type(group_argument), type(argument)))
                     if isinstance(argument, MutuallyExclusiveGroup):
                         group_argument.group = argument
                     self._add_argument(argument=group_argument, argument_name=argument_name)

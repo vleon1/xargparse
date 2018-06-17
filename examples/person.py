@@ -91,9 +91,9 @@ class SubCommand2(ParserHolder):
 # noinspection PyCompatibility
 class Person(PersonInfo, PropertyInfo):
 
-    _description = "Person Class"
+    _description = "Person Class Example Program"
 
-    sub1 = SubCommand1()
+    sub1 = SubCommand1(aliases=["sub"])
     sub2 = SubCommand2()
 
     bio = "No bio"
@@ -123,6 +123,6 @@ if __name__ == "__main__":
 
     args.parse_args(["leon", "vaiman", "29", "male", "gorodisky",
                      "--no-cats", "--one-apple", "--one-apple", "--green", "--green", "--blue",
-                     "sub1", "1"])
+                     "sub", "1"])
     print(args.has_cats)
     print(args)
