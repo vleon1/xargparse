@@ -96,6 +96,8 @@ class Person(PersonInfo, PropertyInfo):
     sub1 = SubCommand1()
     sub2 = SubCommand2()
 
+    bio = "No bio"
+
     _version = "v1.0.0.0"
     _help = "Super help message!!!"
 
@@ -103,10 +105,22 @@ class Person(PersonInfo, PropertyInfo):
 if __name__ == "__main__":
 
     args = Person()
+
     try:
         print(args.has_cats)
     except AttributeError:
         pass
+
+    try:
+        args.set_default("bio1", "He was born in 2088")
+    except AttributeError:
+        pass
+
+    args.set_default("bio", "He was born in 1988")
+
+    print(args.get_default("bio1"))
+    print(args.get_default("bio"))
+
     args.parse_args(["leon", "vaiman", "29", "male", "gorodisky",
                      "--no-cats", "--one-apple", "--one-apple", "--green", "--green", "--blue",
                      "sub1", "1"])

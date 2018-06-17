@@ -14,25 +14,31 @@ import six
 
 # todo:
 # sub command (add_defaults..)
-# set_defaults and get_defaults
 
 # help, version common code refactor
+# exceptions refactor
 # is there a better way to do sub-commands?
 # is there a better way to do argument groups?
+# should we somehow separate the Argument result class from the parser class (can we?)
+# Can we find a better name than ParserHolder
 
 # types
 # docstrings
-# readme
-# pypi
-# should we somehow separate the Argument result class from the parser class (can we?)
+# order!
+# think about names
 
 # changes list
 # 1) sane defaults...
 # 2) No parents argument for parser, inheritance is a perfect and working replacement
+# 3) added set_default
 
 # tests:
 # 1) Inherit twice from two classes with different orders, output strings should differ
 # 2) 
+
+# readme
+# pypi
+
 
 _keep_default = object()
 
@@ -528,10 +534,18 @@ class ParserHolder(_BaseArg):
         # noinspection PyProtectedMember,PyUnresolvedReferences
         for action in self._parser._actions:
             if action.dest is not SUPPRESS and action.default is not SUPPRESS:
+                if action.dest not in dir(self._namespace):
+                    # I think if that happens we have a bug
+                    raise AttributeError(
+                        "class '%s' doesn't have the attribute '%s'" % (type(self._namespace), action.dest))
                 setattr(self._namespace, action.dest, action.default)
 
         # noinspection PyProtectedMember,PyUnresolvedReferences
         for dest, value in self._parser._defaults.items():
+            if dest not in dir(self._namespace):
+                # I think if that happens we have a bug
+                raise AttributeError(
+                    "class '%s' doesn't have the attribute '%s'" % (type(self._namespace), dest))
             setattr(self._namespace, dest, value)
 
         for argument_name, argument in self._sorted_arguments:
@@ -636,6 +650,21 @@ class ParserHolder(_BaseArg):
         argument = add_argument_function(*argument.flags, **argument_kwargs)
         # noinspection PyTypeChecker
         _argument_call_patch(argument, self._namespace)
+
+    def set_default(self, name, value):
+
+        if name not in dir(self):
+            raise AttributeError("class '%s' has not attribute named '%s'" % (type(self), name))
+
+        self._parser.set_defaults(**{name: value})
+
+    def set_defaults(self, **kwargs):
+
+        for name, value in six.viewitems(kwargs):
+            self.set_default(name=name, value=value)
+
+    def get_default(self, name):
+        return self._parser.get_default(dest=name)
 
     def parse_args(self, args=None):
         self._fill_parser()
