@@ -1,6 +1,6 @@
 from enum import Enum, auto, unique
 
-from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup
+from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup
 
 
 # noinspection PyCompatibility
@@ -18,6 +18,7 @@ class Gender(Enum):
 
 
 questions = ArgumentGroup(title="questions", description="Questions about you")
+apples_group = MutuallyExclusiveGroup(required=False)
 
 
 # noinspection PyCompatibility
@@ -32,6 +33,10 @@ class PersonInfo(ParserHolder):
                          help="Tell us if you are an alien!")
     is_zombie: bool = Arg("--zombie", action=ActionName.store_true, group=questions,
                           help="Tell us if you are a zombie!")
+    is_sane: bool = MutuallyExclusiveGroup(required=False, arguments=[
+        Arg("--insane", action=ActionName.store_false, help="You are insane!"),
+        Arg("--sane", action=ActionName.store_true, help="You are sane!"),
+    ], arguments_default=True)
 
 
 # noinspection PyCompatibility
@@ -46,11 +51,20 @@ class PropertyInfo(ParserHolder):
 
     coin_tosses: int = Arg("--toss", default=0, action=ActionName.count, help="Toss a coin")
 
+    one_apple: bool = Arg("--one-apple", action=ActionName.store_true, group=apples_group)
+    two_apples: bool = Arg("--two-apples", action=ActionName.store_true, group=apples_group)
+
 
 # noinspection PyCompatibility
-class SubCommand(ParserHolder):
+class SubCommand1(ParserHolder):
 
     bla: str = Arg(help="bla??")
+
+
+# noinspection PyCompatibility
+class SubCommand2(ParserHolder):
+
+    yada: str = Arg(help="bla??")
 
 
 # noinspection PyCompatibility
@@ -58,7 +72,8 @@ class Person(PersonInfo, PropertyInfo):
 
     _description = "Person Class"
 
-    sub = SubCommand()
+    sub1 = SubCommand1()
+    sub2 = SubCommand2()
 
     _version = "v1.0.0.0"
     _help = "Super help message!!!"
@@ -71,6 +86,6 @@ if __name__ == "__main__":
         print(args.has_cats)
     except AttributeError:
         pass
-    args.parse_args(["leon", "vaiman", "29", "male", "gorodisky", "--no-cats", "sub", "1"])
+    args.parse_args(["leon", "vaiman", "29", "male", "gorodisky", "--no-cats", "--one-apple", "sub1", "1"])
     print(args.has_cats)
     print(args)

@@ -13,24 +13,22 @@ import six
 
 
 # todo:
-# mutually exclusive groups
 # append_const
-# sub command
+# sub command (add_defaults..)
+# set_defaults and get_defaults
 
 # help, version common code refactor
+# is there a better way to do sub-commands?
+# is there a better way to do argument groups?
 
 # docstrings
 # readme
-# fix documentation about not supporting set_defaults and get_defaults, and other changes
 # pypi
-# tests (copy from standard library and add some of our own..)
 # should we somehow separate the Argument result class from the parser class (can we?)
-# is there a better way to do argument groups?
 
 # changes list
 # 1) sane defaults...
-# 2) No set_defaults and get_defaults
-# 3) No parents argument for parser, inheritance is a perfect and working replacement
+# 2) No parents argument for parser, inheritance is a perfect and working replacement
 
 # tests:
 # 1) Inherit twice from two classes with different orders, output strings should differ
@@ -285,6 +283,23 @@ class ArgumentGroup(object):
         self.description = description
 
 
+class MutuallyExclusiveGroup(_BaseArg):
+
+    def __init__(self, required=False, arguments=None, arguments_default=None):
+        """
+        :param required: Same as in the add_mutually_exclusive_group call
+        :param arguments: When used as an argument, this list of arguments will be added to the group with
+        their result put in the groups variable name.
+        :param arguments_default: when used as an argument and required is set to false, this will be used when none of
+        the grouped argument is selected
+        """
+        super(MutuallyExclusiveGroup, self).__init__()
+
+        self.required = required
+        self.arguments = arguments
+        self.arguments_default = arguments_default
+
+
 class SubParserConfig(_KwargsHolder):
 
     _kwarg_names = (
@@ -505,16 +520,27 @@ class ParserHolder(_BaseArg):
         for argument_name, argument in self._sorted_arguments:
             if isinstance(argument, ParserHolder):
                 self._add_subparser(argument=argument, argument_name=argument_name)
-            else:
+            elif isinstance(argument, MutuallyExclusiveGroup):
+                if not argument.arguments:
+                    raise ValueError("Can't add mutually exclusive group without arguments!")
+                for group_argument in argument.arguments:
+                    group_argument.group = argument
+                    self._add_argument(argument=group_argument, argument_name=argument_name)
+                self._parser.set_defaults(**{argument_name: argument.arguments_default})
+            elif isinstance(argument, Arg):
                 self._add_argument(argument=argument, argument_name=argument_name)
+            else:
+                raise ValueError("Unsupported argument type '%s'" % type(argument))
 
         if self._help is not None:
             if isinstance(self._help, six.string_types):
                 help_argument = HelpArg(
                     *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
                     help=self._help)
-            else:
+            elif isinstance(self._help, Arg):
                 help_argument = self._help
+            else:
+                raise ValueError("Unsupported help argument type '%s'" % type(self._help))
 
             self._add_argument(argument=help_argument)
 
@@ -523,8 +549,10 @@ class ParserHolder(_BaseArg):
                 version_argument = VersionArg(
                     *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
                     version=self._version)
-            else:
+            elif isinstance(self._version, Arg):
                 version_argument = self._version
+            else:
+                raise ValueError("Unsupported version argument type '%s'" % type(self._version))
 
             self._add_argument(argument=version_argument)
 
@@ -575,8 +603,17 @@ class ParserHolder(_BaseArg):
             add_argument_function = self._parser.add_argument
         else:
             if argument.group not in self._group_to_group_parser:
-                self._group_to_group_parser[argument.group] = self._parser.add_argument_group(
-                    title=argument.group.title, description=argument.group.description)
+                if isinstance(argument.group, ArgumentGroup):
+                    group_parser = self._parser.add_argument_group(
+                        title=argument.group.title, description=argument.group.description)
+                elif isinstance(argument.group, MutuallyExclusiveGroup):
+                    group_parser = self._parser.add_mutually_exclusive_group(
+                        required=argument.group.required)
+                else:
+                    raise ValueError("Unsupported type '%s' in group argument" % type(argument.group))
+
+                self._group_to_group_parser[argument.group] = group_parser
+
             add_argument_function = self._group_to_group_parser[argument.group].add_argument
 
         # noinspection PyNoneFunctionAssignment
