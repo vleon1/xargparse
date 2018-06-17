@@ -1,6 +1,7 @@
 from enum import Enum, auto, unique
+from typing import List
 
-from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup
+from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args
 
 
 # noinspection PyCompatibility
@@ -12,6 +13,19 @@ class Gender(Enum):
     both = auto()
     neither = auto()
     other = auto()
+
+    def __str__(self):
+        return self.name
+
+
+# noinspection PyCompatibility
+@unique
+class Color(Enum):
+
+    red = auto()
+    green = auto()
+    blue = auto()
+    brown = auto()
 
     def __str__(self):
         return self.name
@@ -33,10 +47,10 @@ class PersonInfo(ParserHolder):
                          help="Tell us if you are an alien!")
     is_zombie: bool = Arg("--zombie", action=ActionName.store_true, group=questions,
                           help="Tell us if you are a zombie!")
-    is_sane: bool = MutuallyExclusiveGroup(required=False, arguments=[
+    is_sane: bool = MutuallyExclusiveGroup(required=False, args=[
         Arg("--insane", action=ActionName.store_false, help="You are insane!"),
         Arg("--sane", action=ActionName.store_true, help="You are sane!"),
-    ], arguments_default=True)
+    ], args_default=True)
 
 
 # noinspection PyCompatibility
@@ -53,6 +67,13 @@ class PropertyInfo(ParserHolder):
 
     one_apple: bool = Arg("--one-apple", action=ActionName.store_true, group=apples_group)
     two_apples: bool = Arg("--two-apples", action=ActionName.store_true, group=apples_group)
+
+    colors: List[Color] = Args(args=[
+        Arg("--red", action=ActionName.append_const, const=Color.red),
+        Arg("--green", action=ActionName.append_const, const=Color.green),
+        Arg("--blue", action=ActionName.append_const, const=Color.blue),
+        Arg("--brown", action=ActionName.append_const, const=Color.brown),
+    ], args_default=[])
 
 
 # noinspection PyCompatibility
@@ -86,6 +107,8 @@ if __name__ == "__main__":
         print(args.has_cats)
     except AttributeError:
         pass
-    args.parse_args(["leon", "vaiman", "29", "male", "gorodisky", "--no-cats", "--one-apple", "sub1", "1"])
+    args.parse_args(["leon", "vaiman", "29", "male", "gorodisky",
+                     "--no-cats", "--one-apple", "--one-apple", "--green", "--green", "--blue",
+                     "sub1", "1"])
     print(args.has_cats)
     print(args)

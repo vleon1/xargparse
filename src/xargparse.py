@@ -13,7 +13,6 @@ import six
 
 
 # todo:
-# append_const
 # sub command (add_defaults..)
 # set_defaults and get_defaults
 
@@ -21,6 +20,7 @@ import six
 # is there a better way to do sub-commands?
 # is there a better way to do argument groups?
 
+# types
 # docstrings
 # readme
 # pypi
@@ -276,6 +276,25 @@ class VersionArg(Arg):
         super(VersionArg, self).__init__(*flags, version=version, help=help, action=ActionName.version)
 
 
+class Args(_BaseArg):
+
+    def __init__(self, args=None, args_default=None):
+        """
+        Lets a couple of args set a value to the same destination, useful for example with set_const
+        where each arg sets a different constant value.
+        :param args: A list of Arg objects
+        :param args_default: A default value to set when none of args was invoked
+        """
+
+        super(Args, self).__init__()
+
+        if args is None:
+            args = []
+
+        self.args = args
+        self.args_default = args_default
+
+
 class ArgumentGroup(object):
 
     def __init__(self, title=None, description=None):
@@ -283,21 +302,19 @@ class ArgumentGroup(object):
         self.description = description
 
 
-class MutuallyExclusiveGroup(_BaseArg):
+class MutuallyExclusiveGroup(Args):
 
-    def __init__(self, required=False, arguments=None, arguments_default=None):
+    def __init__(self, required=False, args=None, args_default=None):
         """
         :param required: Same as in the add_mutually_exclusive_group call
-        :param arguments: When used as an argument, this list of arguments will be added to the group with
+        :param args: When used as an argument, this list of arguments will be added to the group with
         their result put in the groups variable name.
-        :param arguments_default: when used as an argument and required is set to false, this will be used when none of
+        :param args_default: when used as an argument and required is set to false, this will be used when none of
         the grouped argument is selected
         """
-        super(MutuallyExclusiveGroup, self).__init__()
+        super(MutuallyExclusiveGroup, self).__init__(args=args, args_default=args_default)
 
         self.required = required
-        self.arguments = arguments
-        self.arguments_default = arguments_default
 
 
 class SubParserConfig(_KwargsHolder):
@@ -520,13 +537,12 @@ class ParserHolder(_BaseArg):
         for argument_name, argument in self._sorted_arguments:
             if isinstance(argument, ParserHolder):
                 self._add_subparser(argument=argument, argument_name=argument_name)
-            elif isinstance(argument, MutuallyExclusiveGroup):
-                if not argument.arguments:
-                    raise ValueError("Can't add mutually exclusive group without arguments!")
-                for group_argument in argument.arguments:
-                    group_argument.group = argument
+            elif isinstance(argument, Args):
+                for group_argument in argument.args:
+                    if isinstance(argument, MutuallyExclusiveGroup):
+                        group_argument.group = argument
                     self._add_argument(argument=group_argument, argument_name=argument_name)
-                self._parser.set_defaults(**{argument_name: argument.arguments_default})
+                self._parser.set_defaults(**{argument_name: argument.args_default})
             elif isinstance(argument, Arg):
                 self._add_argument(argument=argument, argument_name=argument_name)
             else:
