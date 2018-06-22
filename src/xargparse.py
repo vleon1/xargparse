@@ -20,6 +20,7 @@ import six
 # * Can we find a better name than ParserHolder
 # * think about names
 # * order!
+# * remove six
 
 # * types
 # * docstrings
@@ -34,6 +35,9 @@ import six
 # * added ActionName
 # * The way we set parser properties (like _description) and the HelpArg and versionArg
 # * The way we handle ArgumentGroup and MutuallyExclusiveGroup
+
+# Docs focus
+# * single file code
 
 # tests:
 # * Inherit twice from two classes with different orders, output strings should differ
@@ -352,6 +356,13 @@ class SubParserConfig(_KwargsHolder):
         self.metavar = metavar
 
 
+class SubParserMapper(_BaseArg):
+
+    def __init__(self, **kwargs):
+        super(SubParserMapper, self).__init__()
+        self.map = kwargs
+
+
 class _ParserHolderMeta(type, _KwargsHolder):
     """
     We use this meta class for two reasons:
@@ -565,6 +576,9 @@ class ParserHolder(_BaseArg):
                 self._parser.set_defaults(**{argument_name: argument.args_default})
             elif isinstance(argument, Arg):
                 self._add_argument(argument=argument, argument_name=argument_name)
+            elif isinstance(argument, SubParserMapper):
+                # We set it to base arg for sorting reasons only.
+                pass
             else:
                 raise ValueError("Unsupported argument type '%s'" % type(argument))
 
