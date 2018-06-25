@@ -8,7 +8,41 @@ import sys
 
 from argparse import *
 
-import six
+
+###
+# I stole this code from the six library, Since I wanted fro users of this package to be able to just copy the source file
+# to their project, without an extra dependency.
+###
+if sys.version_info.major >= 3:
+    # noinspection PyUnresolvedReferences
+    _viewkeys = dict.keys
+    # noinspection PyUnresolvedReferences
+    _viewitems = dict.items
+    # noinspection PyUnresolvedReferences
+    _string_types = str,
+else:  # python 2
+    # noinspection PyUnresolvedReferences
+    _viewkeys = dict.viewkeys
+    # noinspection PyUnresolvedReferences
+    _viewitems = dict.viewitems
+    # noinspection PyUnresolvedReferences
+    _string_types = basestring,
+
+
+# This is also from size
+def _add_metaclass(metaclass):
+    def wrapper(cls):
+        original_variables = cls.__dict__.copy()
+        slots = original_variables.get("__slots__")
+        if slots is not None:
+            if isinstance(slots, str):
+                slots = [slots]
+            for slots_variable in slots:
+                original_variables.pop(slots_variable)
+        original_variables.pop("__dict__", None)
+        original_variables.pop("__weakref__", None)
+        return metaclass(cls.__name__, cls.__bases__, original_variables)
+    return wrapper
 
 
 # todo:
@@ -20,7 +54,6 @@ import six
 # * Can we find a better name than ParserHolder
 # * think about names
 # * order!
-# * remove six
 
 # * types
 # * docstrings
@@ -77,7 +110,7 @@ def _subparser_call_patch(argument_instance, argument_holder):
             name_to_namespace = getattr(self, "__name_to_namespace")
 
             # Set all parsers to None, only the one that was chosen will get overwritten
-            for name in six.viewkeys(name_to_namespace):
+            for name in _viewkeys(name_to_namespace):
                 setattr(argument_holder, name, None)
 
             name = alias_to_name[alias]
@@ -391,7 +424,7 @@ class _ParserHolderMeta(type, _KwargsHolder):
 _not_named_argument = object()
 
 
-@six.add_metaclass(_ParserHolderMeta)
+@_add_metaclass(_ParserHolderMeta)
 class ParserHolder(_BaseArg):
     """
     A base class for all the ParserHolders
@@ -583,7 +616,7 @@ class ParserHolder(_BaseArg):
                 raise ValueError("Unsupported argument type '%s'" % type(argument))
 
         if self._help is not None:
-            if isinstance(self._help, six.string_types):
+            if isinstance(self._help, _string_types):
                 help_argument = HelpArg(
                     *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}help", "{p}h")],
                     help=self._help)
@@ -595,7 +628,7 @@ class ParserHolder(_BaseArg):
             self._add_argument(argument=help_argument)
 
         if self._version is not None:
-            if isinstance(self._version, six.string_types):
+            if isinstance(self._version, _string_types):
                 version_argument = VersionArg(
                     *[a.format(p=self._parser.prefix_chars) for a in ("{p}{p}version", "{p}v")],
                     version=self._version)
@@ -680,7 +713,7 @@ class ParserHolder(_BaseArg):
 
     def set_defaults(self, **kwargs):
 
-        for name, value in six.viewitems(kwargs):
+        for name, value in _viewitems(kwargs):
             self.set_default(name=name, value=value)
 
     def get_default(self, name):
