@@ -1,7 +1,7 @@
 from enum import Enum, auto, unique
-from typing import List
+from typing import List, Callable
 
-from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args
+from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args, SubParserMapper
 
 
 # noinspection PyCompatibility
@@ -96,6 +96,8 @@ class Person(PersonInfo, PropertyInfo):
     sub1 = SubCommand1(aliases=["sub"])
     sub2 = SubCommand2()
 
+    parser_name: str = SubParserMapper(sub1="sub1", sub2="sub2")
+
     bio = "No bio"
 
     _version = "v1.0.0.0"
@@ -123,6 +125,7 @@ if __name__ == "__main__":
 
     args.parse_args(["leon", "vaiman", "29", "male", "gorodisky",
                      "--no-cats", "--one-apple", "--one-apple", "--green", "--green", "--blue",
-                     "sub", "1"])
+                     "sub2", "2"])
     print(args.has_cats)
     print(args)
+    print(args.parser_name)

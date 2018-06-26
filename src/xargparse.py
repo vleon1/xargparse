@@ -46,8 +46,6 @@ def _add_metaclass(metaclass):
 
 
 # todo:
-# * Add SubParserMapper, a class that takes subparser name, and value in case it is chosen, implemented by set_default
-#   or maybe even better by _subparser_call_patch
 
 # * help, version common code refactor
 # * exceptions refactor
@@ -97,7 +95,7 @@ def _argument_call_patch(argument_instance, argument_holder):
     argument_instance.__class__ = Replacer
 
 
-def _subparser_call_patch(argument_instance, argument_holder):
+def _subparser_call_patch(argument_instance, argument_holder, subparser_mappers):
 
     parent = type(argument_instance)
 
@@ -115,6 +113,10 @@ def _subparser_call_patch(argument_instance, argument_holder):
 
             name = alias_to_name[alias]
             setattr(argument_holder, name, name_to_namespace[name])
+
+            for mapper_name, mapper in subparser_mappers:
+                value = mapper.map.get(name, None)
+                setattr(argument_holder, mapper_name, value)
 
             return super(Replacer, self).__call__(parser, namespace, values, option_string)
 
@@ -390,6 +392,14 @@ class SubParserConfig(_KwargsHolder):
 
 
 class SubParserMapper(_BaseArg):
+    """
+    A mapper of subparser name to anything that we want to set when the subparser is chosen
+    None set parsers are not allowed in this implementation (explicit better than implicit)
+    But you can subclass this parser and change _must_set_all_parsers to False to overwrite this.
+    """
+
+    # Subclass with a False value (or change in the instance you create, to allow unset parsers.
+    _must_set_all_parsers = True
 
     def __init__(self, **kwargs):
         super(SubParserMapper, self).__init__()
@@ -416,7 +426,7 @@ class _ParserHolderMeta(type, _KwargsHolder):
 
         _sortable_arguments = ((k, v) for k, v in attrs.items() if isinstance(v, _BaseArg))
         # noinspection PyProtectedMember
-        attrs["_sorted_arguments"] = list(sorted(_sortable_arguments, key=lambda kv: kv[1]._instance_index))
+        attrs["_sorted_arguments"] = sorted(_sortable_arguments, key=lambda kv: kv[1]._instance_index)
 
         return super(_ParserHolderMeta, mcs).__new__(mcs, name, bases, attrs)
 
@@ -595,9 +605,12 @@ class ParserHolder(_BaseArg):
                     "class '%s' doesn't have the attribute '%s'" % (type(self._namespace), dest))
             setattr(self._namespace, dest, value)
 
+        subparser_names = {n for n, a in self._sorted_arguments if isinstance(a, ParserHolder)}
+        subparser_mappers = list((n, a) for n, a in self._sorted_arguments if isinstance(a, SubParserMapper))
+
         for argument_name, argument in self._sorted_arguments:
             if isinstance(argument, ParserHolder):
-                self._add_subparser(argument=argument, argument_name=argument_name)
+                self._add_subparser(argument=argument, argument_name=argument_name, subparser_mappers=subparser_mappers)
             elif isinstance(argument, Args):
                 for group_argument in argument.args:
                     if not isinstance(group_argument, Arg):
@@ -610,8 +623,14 @@ class ParserHolder(_BaseArg):
             elif isinstance(argument, Arg):
                 self._add_argument(argument=argument, argument_name=argument_name)
             elif isinstance(argument, SubParserMapper):
-                # We set it to base arg for sorting reasons only.
-                pass
+                for name in _viewkeys(argument.map):
+                    if name not in subparser_names:
+                        raise KeyError("SubParserMapper maps to a none existing SubParser '%s'" % name)
+                # noinspection PyProtectedMember
+                if argument._must_set_all_parsers:
+                    for name in subparser_names:
+                        if name not in argument.map:
+                            raise KeyError("SubParserMapper is missing a key for the SubParser '%s'" % name)
             else:
                 raise ValueError("Unsupported argument type '%s'" % type(argument))
 
@@ -639,7 +658,7 @@ class ParserHolder(_BaseArg):
 
             self._add_argument(argument=version_argument)
 
-    def _add_subparser(self, argument, argument_name):
+    def _add_subparser(self, argument, argument_name, subparser_mappers):
 
         # todo: Add magic for the subparser to be able to write straight to the parser object..
 
@@ -655,7 +674,7 @@ class ParserHolder(_BaseArg):
             setattr(self._subparser, "__alias_to_name", {})
             setattr(self._subparser, "__name_to_namespace", {})
 
-            _subparser_call_patch(self._subparser, self._namespace)
+            _subparser_call_patch(self._subparser, self._namespace, subparser_mappers)
 
         # noinspection PyProtectedMember
         add_parser_kwargs = dict(argument._parser_kwargs)
