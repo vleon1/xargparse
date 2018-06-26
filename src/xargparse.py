@@ -9,50 +9,14 @@ import sys
 from argparse import *
 
 
-###
-# I stole this code from the six library, Since I wanted fro users of this package to be able to just copy the source file
-# to their project, without an extra dependency.
-###
-if sys.version_info.major >= 3:
-    # noinspection PyUnresolvedReferences
-    _viewkeys = dict.keys
-    # noinspection PyUnresolvedReferences
-    _viewitems = dict.items
-    # noinspection PyUnresolvedReferences
-    _string_types = str,
-else:  # python 2
-    # noinspection PyUnresolvedReferences
-    _viewkeys = dict.viewkeys
-    # noinspection PyUnresolvedReferences
-    _viewitems = dict.viewitems
-    # noinspection PyUnresolvedReferences
-    _string_types = basestring,
-
-
-# This is also from size
-def _add_metaclass(metaclass):
-    def wrapper(cls):
-        original_variables = cls.__dict__.copy()
-        slots = original_variables.get("__slots__")
-        if slots is not None:
-            if isinstance(slots, str):
-                slots = [slots]
-            for slots_variable in slots:
-                original_variables.pop(slots_variable)
-        original_variables.pop("__dict__", None)
-        original_variables.pop("__weakref__", None)
-        return metaclass(cls.__name__, cls.__bases__, original_variables)
-    return wrapper
-
-
 # todo:
 
 # * help, version common code refactor
-# * exceptions refactor
 # * Can we find a better name than ParserHolder
 # * think about names
 # * order!
 
+# * named calls
 # * types
 # * docstrings
 
@@ -78,12 +42,57 @@ def _add_metaclass(metaclass):
 # * pypi
 
 
+# I stole this code from the six library, Since I wanted fro users of this package to be able to just copy the source file
+# to their project, without an extra dependency.
+if sys.version_info.major >= 3:
+    # noinspection PyUnresolvedReferences
+    _viewkeys = dict.keys
+    # noinspection PyUnresolvedReferences
+    _viewitems = dict.items
+    # noinspection PyUnresolvedReferences
+    _string_types = str,
+else:  # python 2
+    # noinspection PyUnresolvedReferences
+    _viewkeys = dict.viewkeys
+    # noinspection PyUnresolvedReferences
+    _viewitems = dict.viewitems
+    # noinspection PyUnresolvedReferences
+    _string_types = basestring,
+
+
+# This is also from six
+def _add_metaclass(metaclass):
+    def wrapper(cls):
+        original_variables = cls.__dict__.copy()
+        slots = original_variables.get("__slots__")
+        if slots is not None:
+            if isinstance(slots, str):
+                slots = [slots]
+            for slots_variable in slots:
+                original_variables.pop(slots_variable)
+        original_variables.pop("__dict__", None)
+        original_variables.pop("__weakref__", None)
+        return metaclass(cls.__name__, cls.__bases__, original_variables)
+    return wrapper
+
+
+# Used internally to indicate that an argument should not be passed as part of an argument dict
+# (In other words the receiving function should use its own default value for the argument)
 _keep_default = object()
 
 
-def _argument_call_patch(argument_instance, argument_holder):
+# A hack function that allows us to patch argparse action.__call__ to use our ParserHolder
+# objects as a namespace instead of the provided one. This is ugly, but considering all the
+# other alternatives I think it is the best choice.
+# It allows us to support all existing Action classes in argparse and any user created subclasses without the need to change
+# anything, or add tons of subclasses.
+# The downside is that if a user have an Action subclass that does something with the namespace that shouldn't be done on our
+# ParserHolder object, unexpected things might happen that are difficult to debug.
+# But from the user's point of view the ParserHolder is the namespace, and the library doesn't allow to supply a custom
+# namespace argument anyway, so hopefully these cases should be rare enough.
+def _action_call_patch(action_instance, argument_holder):
 
-    parent = type(argument_instance)
+    parent = type(action_instance)
 
     class Replacer(parent):
 
@@ -92,12 +101,13 @@ def _argument_call_patch(argument_instance, argument_holder):
             return super(Replacer, self).__call__(parser, argument_holder, values, option_string)
 
     Replacer.__name__ = parent.__name__
-    argument_instance.__class__ = Replacer
+    action_instance.__class__ = Replacer
 
 
-def _subparser_call_patch(argument_instance, argument_holder, subparser_mappers):
+# Same hack as _action_call_patch but with extra logic for subparsers
+def _subparser_action_call_patch(action_instance, argument_holder, subparser_mappers):
 
-    parent = type(argument_instance)
+    parent = type(action_instance)
 
     class Replacer(parent):
 
@@ -121,13 +131,99 @@ def _subparser_call_patch(argument_instance, argument_holder, subparser_mappers)
             return super(Replacer, self).__call__(parser, namespace, values, option_string)
 
     Replacer.__name__ = parent.__name__
-    argument_instance.__class__ = Replacer
+    action_instance.__class__ = Replacer
 
 
 class SuppressError(ValueError):
+    """
+    An exception thrown in case the user tries to use the argparse.SUPPRESS as a value, since not setting
+    an argument goes against the whole logic and idea of this library.
+    """
     def __init__(self):
         super(SuppressError, self).__init__(
             "SUPPRESS is not supported for argument defaults since it makes no sense in class context"
+        )
+
+
+class UnparsedArgumentAccess(AttributeError):
+    """ Raised when we try to access a parser attribute before parse_args or parse_known_args was called"""
+    def __init__(self):
+        super(UnparsedArgumentAccess, self).__init__("Tried to access an unparsed argument")
+
+
+class ArgumentForDefaultValueDoesntExist(AttributeError):
+    """ Raised when trying to set a default value for an attribute that doesn't exist """
+    def __init__(self, parser, attribute_name):
+        super(ArgumentForDefaultValueDoesntExist, self).__init__(
+            "class '%s' has not attribute named '%s'" % (type(parser), attribute_name)
+        )
+
+
+class NoArgumentInParser(AttributeError):
+    """ Raised when trying to set a value to an argument of a parser, but the parser didn't define this argument """
+
+    def __init__(self, parser, dest):
+        super(NoArgumentInParser, self).__init__(
+            "class '%s' doesn't have the attribute '%s'" % (type(parser), dest)
+        )
+
+
+class UnsupportedType(TypeError):
+    """ Generic base exception raised when an argument of a wrong type is used in the wrong place """
+    message_template = ""
+
+    def __init__(self, argument):
+        super(UnsupportedType, self).__init__(self.message_template % type(argument))
+
+
+class UnsupportedGroupType(UnsupportedType):
+    """ Raised when a group parameter in an Argument is not a subclass of one of the supported group types """
+    message_template = "Unsupported type '%s' in group argument"
+
+    def __init__(self, group):
+        super(UnsupportedGroupType, self).__init__(argument=group)
+
+
+class UnsupportedArgumentType(UnsupportedType):
+    """
+    Raised when an argument is not an instance of one of the supported types for arguments
+    This can only happen if you subclass _BaseArg instead of one of its subclasses,
+    and then use this subclass as an argument.
+    """
+    message_template = "Unsupported argument type '%s'"
+
+
+class UnsupportedHelpArgumentType(UnsupportedType):
+    """ Raised when the _help argument is of an unsupported type """
+    message_template = "Unsupported help argument type '%s'"
+
+
+class UnsupportedVersionArgumentType(UnsupportedType):
+    """ Raised when the _version argument is of an unsupported type """
+    message_template = "Unsupported version argument type '%s'"
+
+
+class UnsupportedArgumentTypeInArgs(UnsupportedType):
+    """ Raised when we use an Args object with arguments that don't subclass Arg """
+    message_template = "Unsupported argument type '%s' in an Args class"
+
+
+class MissingSubParserKeyInMapper(KeyError):
+    """
+    Raised when a SubParserMapper with _must_set_all_parsers=True
+    is missing a mapping for one of the subparsers
+    """
+    def __init__(self, name):
+        super(MissingSubParserKeyInMapper, self).__init__(
+            "SubParserMapper is missing a key for the SubParser '%s'" % name
+        )
+
+
+class NoSubParserForKeyInMapper(KeyError):
+    """  Raised when a SubParserMapper contains a key with noe SubParser to map to """
+    def __init__(self, name):
+        super(NoSubParserForKeyInMapper, self).__init__(
+            "SubParserMapper maps to a none existing SubParser '%s'" % name
         )
 
 
@@ -193,7 +289,7 @@ class _ParsedProperty(object):
     def __get__(self, instance, owner):
 
         if instance not in self._instance_to_value:
-            raise AttributeError("Tried to access an unparsed property")
+            raise UnparsedArgumentAccess()
 
         return self._instance_to_value[instance]
 
@@ -548,7 +644,7 @@ class ParserHolder(_BaseArg):
         self._parser = self._parser_class(**self._parser_kwargs)
 
         self._group_to_group_parser = {}
-        self._subparser = None
+        self._subparser_action = None
 
     def _get_parser_kwargs(self, add_help):
 
@@ -593,16 +689,14 @@ class ParserHolder(_BaseArg):
             if action.dest is not SUPPRESS and action.default is not SUPPRESS:
                 if action.dest not in dir(self._namespace):
                     # I think if that happens we have a bug
-                    raise AttributeError(
-                        "class '%s' doesn't have the attribute '%s'" % (type(self._namespace), action.dest))
+                    raise NoArgumentInParser(parser=self._namespace, dest=action.dest)
                 setattr(self._namespace, action.dest, action.default)
 
         # noinspection PyProtectedMember,PyUnresolvedReferences
         for dest, value in self._parser._defaults.items():
             if dest not in dir(self._namespace):
                 # I think if that happens we have a bug
-                raise AttributeError(
-                    "class '%s' doesn't have the attribute '%s'" % (type(self._namespace), dest))
+                raise NoArgumentInParser(parser=self._namespace, dest=dest)
             setattr(self._namespace, dest, value)
 
         subparser_names = {n for n, a in self._sorted_arguments if isinstance(a, ParserHolder)}
@@ -614,8 +708,8 @@ class ParserHolder(_BaseArg):
             elif isinstance(argument, Args):
                 for group_argument in argument.args:
                     if not isinstance(group_argument, Arg):
-                        raise ValueError(
-                            "Unsupported argument type '%s' inside '%s'" % (type(group_argument), type(argument)))
+                        raise UnsupportedArgumentTypeInArgs(argument=group_argument)
+
                     if isinstance(argument, MutuallyExclusiveGroup):
                         group_argument.group = argument
                     self._add_argument(argument=group_argument, argument_name=argument_name)
@@ -625,14 +719,14 @@ class ParserHolder(_BaseArg):
             elif isinstance(argument, SubParserMapper):
                 for name in _viewkeys(argument.map):
                     if name not in subparser_names:
-                        raise KeyError("SubParserMapper maps to a none existing SubParser '%s'" % name)
+                        raise NoSubParserForKeyInMapper(name=name)
                 # noinspection PyProtectedMember
                 if argument._must_set_all_parsers:
                     for name in subparser_names:
                         if name not in argument.map:
-                            raise KeyError("SubParserMapper is missing a key for the SubParser '%s'" % name)
+                            raise MissingSubParserKeyInMapper(name=name)
             else:
-                raise ValueError("Unsupported argument type '%s'" % type(argument))
+                raise UnsupportedArgumentType(argument=argument)
 
         if self._help is not None:
             if isinstance(self._help, _string_types):
@@ -642,7 +736,7 @@ class ParserHolder(_BaseArg):
             elif isinstance(self._help, Arg):
                 help_argument = self._help
             else:
-                raise ValueError("Unsupported help argument type '%s'" % type(self._help))
+                raise UnsupportedHelpArgumentType(argument=self._help)
 
             self._add_argument(argument=help_argument)
 
@@ -654,7 +748,7 @@ class ParserHolder(_BaseArg):
             elif isinstance(self._version, Arg):
                 version_argument = self._version
             else:
-                raise ValueError("Unsupported version argument type '%s'" % type(self._version))
+                raise UnsupportedVersionArgumentType(argument=self._version)
 
             self._add_argument(argument=version_argument)
 
@@ -662,29 +756,29 @@ class ParserHolder(_BaseArg):
 
         # todo: Add magic for the subparser to be able to write straight to the parser object..
 
-        if self._subparser is None:
+        if self._subparser_action is None:
             if self._subparser_config is None:
                 subparser_config = SubParserConfig()
             else:
                 subparser_config = self._subparser_config
             # noinspection PyProtectedMember
             subparser_config_kwargs = subparser_config._get_kwargs()
-            self._subparser = self._parser.add_subparsers(**subparser_config_kwargs)
+            self._subparser_action = self._parser.add_subparsers(**subparser_config_kwargs)
 
-            setattr(self._subparser, "__alias_to_name", {})
-            setattr(self._subparser, "__name_to_namespace", {})
+            setattr(self._subparser_action, "__alias_to_name", {})
+            setattr(self._subparser_action, "__name_to_namespace", {})
 
-            _subparser_call_patch(self._subparser, self._namespace, subparser_mappers)
+            _subparser_action_call_patch(self._subparser_action, self._namespace, subparser_mappers)
 
         # noinspection PyProtectedMember
         add_parser_kwargs = dict(argument._parser_kwargs)
         # noinspection PyProtectedMember
         add_parser_kwargs.update(argument._get_kwargs())
 
-        argument._parser = self._subparser.add_parser(argument_name, **add_parser_kwargs)
+        argument._parser = self._subparser_action.add_parser(argument_name, **add_parser_kwargs)
 
-        alias_to_name = getattr(self._subparser, "__alias_to_name")
-        name_to_namespace = getattr(self._subparser, "__name_to_namespace")
+        alias_to_name = getattr(self._subparser_action, "__alias_to_name")
+        name_to_namespace = getattr(self._subparser_action, "__name_to_namespace")
         name_to_namespace[argument_name] = argument
         alias_to_name[argument_name] = argument_name
         for alias in add_parser_kwargs.get("aliases", []):
@@ -712,21 +806,21 @@ class ParserHolder(_BaseArg):
                     group_parser = self._parser.add_mutually_exclusive_group(
                         required=argument.group.required)
                 else:
-                    raise ValueError("Unsupported type '%s' in group argument" % type(argument.group))
+                    raise UnsupportedGroupType(group=argument.group)
 
                 self._group_to_group_parser[argument.group] = group_parser
 
             add_argument_function = self._group_to_group_parser[argument.group].add_argument
 
         # noinspection PyNoneFunctionAssignment
-        argument = add_argument_function(*argument.flags, **argument_kwargs)
+        action = add_argument_function(*argument.flags, **argument_kwargs)
         # noinspection PyTypeChecker
-        _argument_call_patch(argument, self._namespace)
+        _action_call_patch(action, self._namespace)
 
     def set_default(self, name, value):
 
         if name not in dir(self):
-            raise AttributeError("class '%s' has not attribute named '%s'" % (type(self), name))
+            raise ArgumentForDefaultValueDoesntExist(parser=self, attribute_name=name)
 
         self._parser.set_defaults(**{name: value})
 
