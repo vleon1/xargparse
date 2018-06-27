@@ -11,23 +11,21 @@ from argparse import *  # Exposing all argparse here so that users don't have to
 A little trick to make sure we don't really try to import typing unless we need them
 """
 if "mypy" in os.environ:
-    from typing import Dict, Any, List, Optional, Union, Callable
+    from typing import Dict, Any, List, Optional, Union, Callable, Iterable, Tuple
 
 
 # todo:
 
-# * help, version common code refactor
-# * Can we find a better name than ParserHolder (ClassParser)
-# * change namespace, and parser-holder to parser or class parser
+# Names:
+# * change namespace, parser-holder and parser class-parser (ClassParser)
+# * add_argument to Arg
+# * argparse to xargparse
 # * think about names
 
+# Other:
 # * named calls
-# * types
-# * docstrings
-# * figure out if references like https://docs.python.org/3.6/library/argparse.html#metavar are good, and if we can change the
-#   version part to be dynamic..
 
-# changes list
+# changes list:
 # * USE_SANE_DEFAULTS
 # * No parents argument for parser, inheritance is a perfect and working replacement
 # * added set_default, they must overwrite something that exist, not recommended to use
@@ -40,13 +38,14 @@ if "mypy" in os.environ:
 # * No namespace
 # * exit = exit_ and error = error_
 
-# Docs focus
+# Docs focus:
 # * single file code
 
 # tests:
 # * Inherit twice from two classes with different orders, output strings should differ
 # * Make sure we see Set and see Description
 
+# Final stuff:
 # * readme
 # * license
 # * pypi
@@ -132,7 +131,7 @@ def _action_call_patch(action_instance, argument_holder):
 
 # noinspection PyProtectedMember
 def _subparser_action_call_patch(action_instance, argument_holder, subparser_mappers):
-    # type: (argparse._SubParsersAction, ParserHolder, List[SubParserMapper]) -> None
+    # type: (argparse._SubParsersAction, ParserHolder, List[Tuple[str, SubParserMapper]]) -> None
     """ Same hack as _action_call_patch but with extra logic for subparsers """
 
     parent = type(action_instance)
@@ -309,18 +308,61 @@ _not_named_argument = object()
 class ActionName(object):
     """ Use this for string actions, because named variables get auto completion and strings don't... """
 
+    """
+    This just stores the argument’s value. This is the default action.
+    """
     store = "store"
-    store_true = "store_true"
-    store_false = "store_false"
-    store_const = "store_const"
-    append = "append"
-    append_const = "append_const"
-    count = "count"
-    help = "help"
-    version = "version"
 
-    # This one should not be used directly
-    parsers = "parsers"
+    """
+    This stores the value specified by the const keyword argument. 
+    The 'store_const' action is most commonly used with optional arguments that specify some sort of flag.
+    """
+    store_const = "store_const"
+
+    """
+    A special cases of 'store_const' used for storing the value True. 
+    In addition, it creates a default value of False.
+    """
+    store_true = "store_true"
+
+    """
+    A special cases of 'store_const' used for storing the value False. 
+    In addition, it creates a default value of True.
+    """
+    store_false = "store_false"
+
+    """
+    This stores a list, and appends each argument value to the list. 
+    This is useful to allow an option to be specified multiple times.
+    """
+    append = "append"
+
+    """
+    This stores a list, and appends the value specified by the const keyword argument to the list.
+    (Note that the const keyword argument defaults to None.)
+    The 'append_const' action is typically useful when multiple arguments need to store constants to the same list
+    using an Args object.
+    """
+    append_const = "append_const"
+
+    """
+    This counts the number of times a keyword argument occurs. 
+    For example, this is useful for increasing verbosity levels.
+    """
+    count = "count"
+
+    """
+    This prints a complete help message for all the options in the current parser and then exits.
+    By default a help action is automatically added to the parser. 
+    See ParserHolder for details of how the output is created.
+    """
+    help = "help"
+
+    """
+    This expects a version= keyword argument in the add_argument() call,
+    and prints version information and exits when invoked.
+    """
+    version = "version"
 
 
 class ConflictHandlerName(object):
@@ -331,10 +373,38 @@ class ConflictHandlerName(object):
 
 
 class NArgName(object):
-    """ Use this instead of the strings '?', '+' etc.. for nargs, you can also directly use the globals in argparse """
+    """
+    Use this instead of the strings '?', '+' etc.. for nargs, you can also directly use the globals in argparse
+    """
+
+    """
+    One argument will be consumed from the command line if possible, and produced as a single item. 
+    If no command-line argument is present, the value from default will be produced. 
+    Note that for optional arguments, there is an additional case - 
+    the option string is present but not followed by a command-line argument. 
+    In this case the value from const will be produced.
+    One of the more common uses of nargs=optional is to allow optional input and output files.
+    """
     optional = argparse.OPTIONAL  # ?
+
+    """
+    All command-line arguments present are gathered into a list. 
+    Note that it generally doesn’t make much sense to have more than one positional argument with 
+    nargs=zero_or_more, but multiple optional arguments with nargs=zero_or_more is possible.
+    """
     zero_or_more = argparse.ZERO_OR_MORE  # *
+
+    """
+    Just like zero_or_more, all command-line args present are gathered into a list. 
+    Additionally, an error message will be generated if there wasn’t at least one 
+    command-line argument present.
+    """
     one_or_more = argparse.ONE_OR_MORE  # +
+
+    """
+    All the remaining command-line arguments are gathered into a list. 
+    This is commonly useful for command line utilities that dispatch to other command line utilities.
+    """
     remainder = argparse.REMAINDER  # ...
 
 
@@ -482,19 +552,120 @@ class Arg(_BaseArg):
             version=_keep_default,  # type: Optional[str]
             group=None,  # type: Union[None, ArgumentGroup, MutuallyExclusiveGroup]
     ):
+        # type: (...) -> None
         """
         :param flags: A flag or a list of flags for optional arguments (This will turn this argument into an optional one..)
-        see info about flags in https://docs.python.org/3.6/library/argparse.html#name-or-flags
-        :param action: https://docs.python.org/3.6/library/argparse.html#action
-        :param nargs: https://docs.python.org/3.6/library/argparse.html#nargs
-        :param const: https://docs.python.org/3.6/library/argparse.html#const
-        :param default: https://docs.python.org/3.6/library/argparse.html#default
-        :param type: https://docs.python.org/3.6/library/argparse.html#type
-        :param choices: https://docs.python.org/3.6/library/argparse.html#choices
-        :param required: https://docs.python.org/3.6/library/argparse.html#required
-        :param help: https://docs.python.org/3.6/library/argparse.html#help
-        :param metavar: https://docs.python.org/3.6/library/argparse.html#metavar
+
+        :param action: ParserHolder objects associate command-line arguments with actions.
+        These actions can do just about anything with the command-line arguments associated with them,
+        though most actions simply add an attribute to the object returned by parse_args().
+        The action keyword argument specifies how the command-line arguments should be handled
+        see ActionName class for a list of provided actions.
+
+        You may also specify an arbitrary action by passing an Action subclass or other object
+        that implements the same interface.
+        The recommended way to do this is to extend Action, overriding the __call__ method
+        and optionally the __init__ method.
+
+        :param nargs: ArgumentParser objects usually associate a single command-line argument with a single action to be taken.
+        The nargs keyword argument associates a different number of command-line arguments with a single action.
+        The supported values are a number or the values in the NArgName class.
+
+        When a number N is supplied. N arguments from the command line will be gathered together into a list
+        Note that nargs=1 produces a list of one item. This is different from the default,
+        in which the item is produced by itself.
+
+        If the nargs keyword argument is not provided, the number of arguments consumed is determined by the action.
+        Generally this means a single command-line argument will be consumed and a single item (not a list) will be produced.
+
+        :param const: The const argument of add_argument() is used to hold constant values that are not read from the
+        command line but are required for the various ArgumentParser actions. The two most common uses of it are:
+
+        * When add_argument() is called with action=store_const or action=append_const.
+        These actions add the const value to one of the attributes of the object returned
+        by parse_args(). See the action description for examples.
+        * When add_argument() is called with option strings (like -f or --foo) and nargs=optional.
+        This creates an optional argument that can be followed by zero or one command-line arguments.
+        When parsing the command line, if the option string is encountered with no command-line argument following it,
+        the value of const will be assumed instead. See the nargs description for examples.
+
+        With the store_const and append_const actions, the const keyword argument must be given.
+        For other actions, it defaults to None.
+
+        :param default: All optional arguments and some positional arguments may be omitted at the command line.
+        The default keyword argument of add_argument(), whose value defaults to None,
+        specifies what value should be used if the command-line argument is not present.
+        For optional arguments, the default value is used when the option string was not present at the command line.
+
+        If the default value is a string, the parser parses the value as if it were a command-line argument.
+        In particular, the parser applies any type conversion argument, if provided,
+        before setting the attribute on the ParserHolder return value. Otherwise, the parser uses the value as is.
+
+        For positional arguments with nargs equal to optional or zero_or_more, the default value is used when
+        no command-line argument was present.
+
+        :param type: By default, ArgumentParser objects read command-line arguments in as simple strings.
+        However, quite often the command-line string should instead be interpreted as another type,
+        like a float or int.
+        The type keyword argument of add_argument() allows any necessary type-checking and type conversions to be performed.
+        Common built-in types and functions can be used directly as the value of the type argument.
+
+        See the section on the default keyword argument for information on when the type argument is applied to default arguments.
+
+        To ease the use of various types of files, the argparse module provides the factory FileType which
+        takes the mode=, bufsize=, encoding= and errors= arguments of the open() function.
+        For example, FileType('w') can be used to create a writable file.
+
+        type= can take any callable that takes a single string argument and returns the converted value.
+
+        The choices keyword argument may be more convenient for type checkers that simply check against a range of values.
+        See the choices section for more details.
+
+        :param choices: Some command-line arguments should be selected from a restricted set of values.
+        These can be handled by passing a container object as the choices keyword argument to Arg.
+        When the command line is parsed, argument values will be checked,
+        and an error message will be displayed if the argument was not one of the acceptable values.
+
+        Note that inclusion in the choices container is checked after any type conversions have been performed,
+        so the type of the objects in the choices container should match the type specified.
+
+        ny object that supports the in operator can be passed as the choices value, so dict objects,
+        set objects, custom containers, etc. are all supported.
+
+        :param required: In general, the argparse module assumes that flags like -f and --bar indicate optional arguments,
+        which can always be omitted at the command line. To make an option required,
+        True can be specified for the required= keyword argument to Arg
+
+        Note: Required options are generally considered bad form because users expect options to be optional,
+        and thus they should be avoided when possible.
+
+        :param help: The help value is a string containing a brief description of the argument.
+        When a user requests help (usually by using -h or --help at the command line),
+        these help descriptions will be displayed with each argument.
+
+        The help strings can include various format specifiers to avoid repetition of things like the program name
+        or the argument default.
+        The available specifiers include the program name, %(prog)s and most keyword arguments
+        to Arg, e.g. %(default)s, %(type)s, etc.
+
+        As the help string supports %-formatting, if you want a literal % to appear in the help string,
+        you must escape it as %%.
+
+        xargparse supports silencing the help entry for certain options,
+        by setting the help value to xargparse.SUPPRESS.
+
+        :param metavar: When ParserHolder generates help messages, it needs some way to refer to each expected argument.
+        By default, ParserHolder objects uses the name of the argument.
+
+        An alternative name can be specified with metavar.
+
+        Note that metavar only changes the displayed name.
+
+        Different values of nargs may cause the metavar to be used multiple times.
+        Providing a tuple to metavar specifies a different display for each of the arguments.
+
         :param version: Only used in version args, an optional string containing the version of the application.
+
         :param group: Used to associate the argument with the provided group
         """
 
@@ -550,6 +721,7 @@ class HelpArg(Arg):
             *flags,  # type: Union[str, List[str]]
             help=_keep_default,  # type: Optional[str]
     ):
+        # type: (...) -> None
         """
         :param flags: Flags for the help argument, when not specified -h and --help are used
         :param help: The help string
@@ -570,6 +742,7 @@ class VersionArg(Arg):
             version=None,  # type: Optional[str]
             help=_keep_default,  # type: Optional[str]
     ):
+        # type: (...) -> None
         """
         :param flags: Flags for the version argument, when not specified -v and --version are used
         :param version: The version string
@@ -625,6 +798,7 @@ class MutuallyExclusiveGroup(Args):
     """
 
     def __init__(self, required=False, args=None, args_default=None):
+        # type: (bool, Optional[List[Arg]], Optional[Any]) -> None
         """
         :param required: Same as in the add_mutually_exclusive_group call
         :param args: When used as an argument, this list of arguments will be added to the group with
@@ -659,6 +833,7 @@ class SubParserConfig(_KwargsHolder):
             help=_keep_default,  # type: Optional[str]
             metavar=_keep_default,  # type: Optional[str]
     ):
+        # type: (...) -> None
         """
 
         :param title: title for the sub-parser group in help output; by default “subcommands”
@@ -710,33 +885,72 @@ class SubParserMapper(_BaseArg):
 @_add_metaclass(_ParserHolderMeta)
 class ParserHolder(_BaseArg):
     """
-    A base class for all the ParserHolders
+    Use this class to get a commandline argument, it is a parallel to argparse.ArgumentParser except that
+    ArgumentParser is also used internally.
 
-    I wanted to allow people to be able to choose between full ease of use, where you just create an instance of you
-    child class and it comes ready to use as in ParserHolder with no potential name conflict for the arguments you
-    added to it, and between exposing every interface you might need in ArgumentParser and giving you more control over
-    parsing, but with a bit stronger restriction on argument names (due to the added method names)
-
-    This class just holds the common code of those options.
+    You use this class by subclassing it, you replace the add_argument calls you would do with ArgumentParser
+    with adding Arg objects to the sub-class (In the same order you would have called add_argument).
     """
 
+    """
+    The name of the program (default: sys.argv[0])
+    """
+    _prog = _keep_default
+
+    """
+    The string describing the program usage (default: generated from arguments added to parser)
+    """
+    _usage = _keep_default
+
+    """
+    Text to display before the argument help (default: none)
+    """
     _description = _keep_default
 
-    # All these have sane auto values
-    _prog = _keep_default
-    _usage = _keep_default
+    """
+    Text to display after the argument help (default: none)
+    """
     _epilog = _keep_default
+
+    """
+    A class for customizing the help output
+    """
     _formatter_class = _keep_default
+
+    """
+    The set of characters that prefix optional arguments (default: ‘-‘)
+    """
     _prefix_chars = _keep_default
+
+    """
+    The set of characters that prefix files from which additional arguments should be read (default: None)
+    """
     _fromfile_prefix_chars = _keep_default
+
+    """
+    The global default value for arguments (default: None)
+    """
     _argument_default = _keep_default
+
+    """
+    The strategy for resolving conflicting optionals (usually unnecessary)
+    """
     _conflict_handler = _keep_default
+
+    """
+    Add a -h/--help option to the parser (default: True)
+    """
     _add_help = _keep_default
 
-    """ Supported only in python>=3.5 on other versions it is silently ignored """
+    """
+    Allows long options to be abbreviated if the abbreviation is unambiguous. (default: True)
+    Supported only in python>=3.5 on other versions it is silently ignored
+    """
     _allow_abbrev = _keep_default
 
-    """ Change the parser class (Useful in cases where you would inherit and overwrite a method like """
+    """
+    Change the parser class
+    """
     _parser_class = argparse.ArgumentParser
 
     """ 
@@ -745,6 +959,8 @@ class ParserHolder(_BaseArg):
     Set it to a HelpArg for more control
     You can also use Arg but that is less comfortable, more error prone and should not be necessary since HelpArg
     is built in a way that is supposed to let you achieve everything that is possible with this type of arguments
+    
+    Setting this and _add_help to anything that evaluates to True will probably create a conflict
     """
     _help = None
 
@@ -766,13 +982,23 @@ class ParserHolder(_BaseArg):
     """
     _subparser_config = None
 
-    # Used when the holder is used as an argument
+    """ Used internally when the parser is used as a subparser """
     _kwarg_names = ("prog", "aliases", "help")
     _kwargs_name_prefix = "__"
 
     # noinspection PyShadowingBuiltins
-    def __init__(self, prog=_keep_default, aliases=_keep_default, help=_keep_default, _add_help=None, _namespace=None):
+    def __init__(
+            self,
+            prog=_keep_default,  # type: Optional[str]
+            aliases=_keep_default,  # type: Optional[List[str]]
+            help=_keep_default,  # type: Optional[str]
+            _add_help=None,  # type: Optional[bool]
+            _namespace=None  # type: Optional[ParserHolder]
+    ):
+        # type: (...) -> None
         """
+        If you overwrite the __init__ method, DO NOT call super since that will break parents usage.
+
         :param prog: When initiated as a subparser it is used to set the prog argument, ignored otherwise
         :param aliases: When initiated as a subparser it is used to set the aliases argument, ignored otherwise
         :param help: When initiated as a subparser it is used to set the help argument, ignored otherwise
@@ -789,27 +1015,6 @@ class ParserHolder(_BaseArg):
         setattr(self, "__aliases", aliases)
         setattr(self, "__help", help)
 
-        # We never call super __init__, this choice escapes the MRO which is usually not a good idea, but in our
-        # case the MRO will not function for the most simple (and probably common) usage of parents that we try to
-        # emulate.
-        # If we have a class with two parents that provide arguments, depending on when we call super (at the start or
-        # at the end) Arguments order will happen:
-        # 1) The first arguments will come from the child class and then from the parents left to right
-        # 2) The first arguments will come from the parents right to left and from the child class and then
-        # While the behaviour in the argparse library is parent left to right first and then the child arguments
-
-        """
-        The parser is not exposed since the name might be used for an argument and since direct usage will most likely
-        break things.
-        But if there is a missing feature in this implementation, or a bug that is possible to overcome by directly
-        using _parser, then nothing stops you from doing so.
-        Do note that you most likely can achieve what you want by implementing it in a subclass, instead of accessing
-        the instance's "_parser" variable.
-        
-        Note that in subparser mode this parameter will be overwritten, but add it in init to make auto completion
-        and type checking work better.
-        """
-
         if _add_help is None:
             _add_help = self._add_help
 
@@ -817,13 +1022,25 @@ class ParserHolder(_BaseArg):
             _namespace = self
         self._namespace = _namespace
 
+        # The parser is not exposed since the name might be used for an argument and since direct usage will most likely
+        # break things.
+        # But if there is a missing feature in this implementation, or a bug that is possible to overcome by directly
+        # using _parser, then nothing stops you from doing so.
+        # Do note that you most likely can achieve what you want by implementing it in a subclass, instead of accessing
+        # the instance's "_parser" variable.
+        #
+        # Note that in subparser mode this parameter will be overwritten, but add it in init to make auto completion
+        # and type checking work better.
         self._parser_kwargs = self._get_parser_kwargs(add_help=_add_help)
         self._parser = self._parser_class(**self._parser_kwargs)
 
-        self._group_to_group_parser = {}
-        self._subparser_action = None
+        # noinspection PyProtectedMember
+        self._group_to_group_parser = {}  # type: Dict[Union[ArgumentGroup, MutuallyExclusiveGroup], argparse._ArgumentGroup]
+        # noinspection PyProtectedMember
+        self._subparser_action = None  # type: Optional[argparse._SubParsersAction]
 
     def _get_parser_kwargs(self, add_help):
+        # type: (Optional[bool]) -> Dict[str, Any]
 
         if self._argument_default == SUPPRESS:
             raise SuppressError()
@@ -848,10 +1065,18 @@ class ParserHolder(_BaseArg):
         return parser_kwargs
 
     def _get_parent_argument_parsers(self):
+        # type: () -> Iterable[ParserHolder]
 
-        # There is no super call here, see why in the comment in the __init__ function
+        # We never call super __init__, this choice escapes the MRO which is usually not a good idea, but in our
+        # case the MRO will not function for the most simple (and probably common) usage of parents that we try to
+        # emulate.
+        # If we have a class with two parents that provide arguments, depending on when we call super (at the start or
+        # at the end) Arguments order will happen:
+        # 1) The first arguments will come from the child class and then from the parents left to right
+        # 2) The first arguments will come from the parents right to left and from the child class and then
+        # While the behaviour in the argparse library is parent left to right first and then the child arguments
         for base in self.__class__.__bases__:
-            if hasattr(base, "_sorted_arguments"):
+            if issubclass(base, ParserHolder):
                 parent_holder = base(_add_help=False, _namespace=self._namespace)
                 # noinspection PyProtectedMember
                 parent_holder._fill_parser()
@@ -860,6 +1085,16 @@ class ParserHolder(_BaseArg):
                 yield parent_holder._parser
 
     def _fill_parser(self):
+        # type: () -> None
+
+        self._fill_parser_defaults()
+
+        self._fill_parser_regular_arguments()
+
+        self._fill_parser_special_arguments()
+
+    def _fill_parser_defaults(self):
+        # type: () -> None
 
         # noinspection PyProtectedMember,PyUnresolvedReferences
         for action in self._parser._actions:
@@ -876,8 +1111,12 @@ class ParserHolder(_BaseArg):
                 raise NoArgumentInParser(parser=self._namespace, dest=dest)
             setattr(self._namespace, dest, value)
 
-        subparser_names = {n for n, a in self._sorted_arguments if isinstance(a, ParserHolder)}
-        subparser_mappers = list((n, a) for n, a in self._sorted_arguments if isinstance(a, SubParserMapper))
+    def _fill_parser_regular_arguments(self):
+        # type: () -> None
+
+        sorted_arguments = self._sorted_arguments  # type: List[Tuple[str, _BaseArg]]
+        subparser_names = {n for n, a in sorted_arguments if isinstance(a, ParserHolder)}
+        subparser_mappers = list((n, a) for n, a in sorted_arguments if isinstance(a, SubParserMapper))
 
         for argument_name, argument in self._sorted_arguments:
             if isinstance(argument, ParserHolder):
@@ -905,6 +1144,9 @@ class ParserHolder(_BaseArg):
             else:
                 raise UnsupportedArgumentType(argument=argument)
 
+    def _fill_parser_special_arguments(self):
+        # type: () -> None
+
         if self._help is not None:
             if isinstance(self._help, _string_types):
                 help_argument = HelpArg(
@@ -930,20 +1172,10 @@ class ParserHolder(_BaseArg):
             self._add_argument(argument=version_argument, argument_name=_not_named_argument)
 
     def _add_subparser(self, argument, argument_name, subparser_mappers):
+        # type: (ParserHolder, str, List[Tuple[str, SubParserMapper]]) -> None
 
         if self._subparser_action is None:
-            if self._subparser_config is None:
-                subparser_config = SubParserConfig()
-            else:
-                subparser_config = self._subparser_config
-            # noinspection PyProtectedMember
-            subparser_config_kwargs = subparser_config._get_kwargs()
-            self._subparser_action = self._parser.add_subparsers(**subparser_config_kwargs)
-
-            setattr(self._subparser_action, "__alias_to_name", {})
-            setattr(self._subparser_action, "__name_to_namespace", {})
-
-            _subparser_action_call_patch(self._subparser_action, self._namespace, subparser_mappers)
+            self._add_subparser_action(subparser_mappers=subparser_mappers)
 
         # noinspection PyProtectedMember
         add_parser_kwargs = dict(argument._parser_kwargs)
@@ -952,8 +1184,8 @@ class ParserHolder(_BaseArg):
 
         argument._parser = self._subparser_action.add_parser(argument_name, **add_parser_kwargs)
 
-        alias_to_name = getattr(self._subparser_action, "__alias_to_name")
-        name_to_namespace = getattr(self._subparser_action, "__name_to_namespace")
+        alias_to_name = getattr(self._subparser_action, "__alias_to_name")  # type: Dict[str, str]
+        name_to_namespace = getattr(self._subparser_action, "__name_to_namespace")  # type: Dict[str, ParserHolder]
         name_to_namespace[argument_name] = argument
         alias_to_name[argument_name] = argument_name
         for alias in add_parser_kwargs.get("aliases", []):
@@ -962,7 +1194,24 @@ class ParserHolder(_BaseArg):
         # noinspection PyProtectedMember
         argument._fill_parser()
 
+    def _add_subparser_action(self, subparser_mappers):
+        # type: (List[Tuple[str, SubParserMapper]]) -> None
+
+        if self._subparser_config is None:
+            subparser_config = SubParserConfig()
+        else:
+            subparser_config = self._subparser_config
+        # noinspection PyProtectedMember
+        subparser_config_kwargs = subparser_config._get_kwargs()
+        self._subparser_action = self._parser.add_subparsers(**subparser_config_kwargs)
+
+        setattr(self._subparser_action, "__alias_to_name", {})
+        setattr(self._subparser_action, "__name_to_namespace", {})
+
+        _subparser_action_call_patch(self._subparser_action, self._namespace, subparser_mappers)
+
     def _add_argument(self, argument, argument_name):
+        # type: (Arg, Union[str, _not_named_argument]) -> None
 
         # noinspection PyProtectedMember
         argument_kwargs = argument._get_kwargs()
@@ -993,6 +1242,15 @@ class ParserHolder(_BaseArg):
         _action_call_patch(action, self._namespace)
 
     def set_default(self, name, value):
+        # type: (str, Any) -> None
+        """
+        Most of the time, the attributes of the object returned by parse_args() will be fully determined
+        by inspecting the command-line arguments and the argument actions.
+        set_defaults() allows some additional attributes that are determined without any inspection of
+        the command line to be added.
+
+        Note that parser-level defaults always override argument-level defaults.
+        """
 
         if name not in dir(self):
             raise ArgumentForDefaultValueDoesntExist(parser=self, attribute_name=name)
@@ -1000,37 +1258,100 @@ class ParserHolder(_BaseArg):
         self._parser.set_defaults(**{name: value})
 
     def set_defaults(self, **kwargs):
+        # type: (Dict[str, Any]) -> None
+        """
+        Most of the time, the attributes of the object returned by parse_args() will be fully determined
+        by inspecting the command-line arguments and the argument actions.
+        set_defaults() allows some additional attributes that are determined without any inspection of
+        the command line to be added.
+
+        Note that parser-level defaults always override argument-level defaults.
+        """
 
         for name, value in _viewitems(kwargs):
             self.set_default(name=name, value=value)
 
     def get_default(self, name):
+        # type: (str) -> Any
+        """
+        Get the default value for an attribute, as set by either add_argument() or by adding through Arg.
+        """
         return self._parser.get_default(dest=name)
 
     def parse_args(self, args=None):
+        # type: (Optional[List[str]]) -> ParserHolder
+        """
+        Convert argument strings to objects and assign them as attributes of the Parser. Return the Parser.
+        Args set in the Parser subclass determine exactly what objects are parsed.
+        See the documentation for Arg for details.
+
+        :param args: List of strings to parse. The default is taken from sys.argv.
+        """
+
         self._fill_parser()
         self._parser.parse_args(args=args)
         return self
 
     def parse_known_args(self, args=None):
+        # type: (Optional[List[str]]) -> Tuple[ParserHolder, List[str]]
+        """
+        Sometimes a script may only parse a few of the command-line arguments,
+        passing the remaining arguments on to another script or program.
+        In these cases, the parse_known_args() method can be useful.
+        It works much like parse_args() except that it does not produce an error
+        when extra arguments are present.
+        Instead, it returns a two item tuple containing the populated namespace
+        and the list of remaining argument strings.
+        """
+
         self._fill_parser()
         _, remainder = self._parser.parse_known_args(args=args)
         return self, remainder
 
     def format_usage(self):
+        # type: () -> str
+        """
+        Return a string containing a brief description of how the ArgumentParser should be
+        invoked on the command line.
+        """
         return self._parser.format_usage()
 
     def format_help(self):
+        # type: () -> str
+        """
+        Return a string containing a help message, including the program usage and information
+        about the arguments registered with the ArgumentParser.
+        """
         return self._parser.format_help()
 
     def print_usage(self, file=None):
+        # type: (Optional[file]) -> None
+        """
+        Print a brief description of how the ArgumentParser should be invoked on the command line.
+        If file is None, sys.stdout is assumed.
+        """
         return self._parser.print_usage(file=file)
 
     def print_help(self, file=None):
+        # type: (Optional[file]) -> None
+        """
+        Print a help message, including the program usage and information about the arguments
+        registered with the ArgumentParser. If file is None, sys.stdout is assumed.
+        """
         return self._parser.print_help(file=file)
 
     def exit_(self, status=0, message=None):
+        # type: (int, Optional[str]) -> None
+        """
+        This method terminates the program, exiting with the specified status and, if given,
+        it prints a message before that.
+        """
         return self._parser.exit(status=status, message=message)
 
     def error_(self, message=None):
+        # type: (Optional[str]) -> None
+        """
+        This method prints a usage message including the message to the standard error and
+        terminates the program with a status code of 2.
+        """
         return self._parser.error(message=message)

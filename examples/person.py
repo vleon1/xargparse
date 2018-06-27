@@ -1,5 +1,5 @@
 from enum import Enum, auto, unique
-from typing import List, Callable
+from typing import List
 
 from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args, SubParserMapper
 
@@ -41,6 +41,7 @@ class PersonInfo(ParserHolder):
     name: str = Arg(help="Your name")
     family: str = Arg(help="Your family name")
     age: int = Arg(help="Your age", type=int)
+    # noinspection PyTypeChecker
     gender: Gender = Arg(type=Gender.__getitem__, choices=Gender,
                          help="The closest thing to your Gender")
     is_human: bool = Arg("--not-human", "--alien", "-a", action=ActionName.store_false, group=questions,
