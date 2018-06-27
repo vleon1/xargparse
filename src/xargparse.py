@@ -1,5 +1,5 @@
 """
-Class based extension to argparse: https://docs.python.org/3/library/argparse.html
+Class based extension to argparse
 """
 import argparse
 import os
@@ -16,14 +16,15 @@ if "mypy" in os.environ:
 
 # todo:
 
+# Other:
+# *
+# * named calls
+
 # Names:
 # * change namespace, parser-holder and parser class-parser (ClassParser)
 # * add_argument to Arg
 # * argparse to xargparse
 # * think about names
-
-# Other:
-# * named calls
 
 # changes list:
 # * USE_SANE_DEFAULTS
@@ -37,6 +38,7 @@ if "mypy" in os.environ:
 # * The way we handle ArgumentGroup and MutuallyExclusiveGroup
 # * No namespace
 # * exit = exit_ and error = error_
+# * no convert_arg_line_to_args to overwrite, provide a _parser_class with the overwritten method instead..
 
 # Docs focus:
 # * single file code
@@ -368,7 +370,14 @@ class ActionName(object):
 class ConflictHandlerName(object):
     """ Use this when setting _conflict_handler in the ParserHolder instead of relying on strings """
 
+    """
+    The default conflict handler, Any duplicates will create an error.
+    """
     error = "error"
+
+    """
+    Overwrites duplicates
+    """
     resolve = "resolve"
 
 
@@ -530,7 +539,9 @@ class _ParserHolderMeta(type, _KwargsHolder):
 # =============================
 
 class Arg(_BaseArg):
-    """ A class that we use as a parallel to ArgumentParser.add_argument """
+    """
+    Define how a single command-line argument should be parsed.
+    """
 
     _kwarg_names = (
         "action", "nargs", "const", "default", "type", "choices", "required", "help", "metavar", "version"
@@ -555,117 +566,16 @@ class Arg(_BaseArg):
         # type: (...) -> None
         """
         :param flags: A flag or a list of flags for optional arguments (This will turn this argument into an optional one..)
-
-        :param action: ParserHolder objects associate command-line arguments with actions.
-        These actions can do just about anything with the command-line arguments associated with them,
-        though most actions simply add an attribute to the object returned by parse_args().
-        The action keyword argument specifies how the command-line arguments should be handled
-        see ActionName class for a list of provided actions.
-
-        You may also specify an arbitrary action by passing an Action subclass or other object
-        that implements the same interface.
-        The recommended way to do this is to extend Action, overriding the __call__ method
-        and optionally the __init__ method.
-
-        :param nargs: ArgumentParser objects usually associate a single command-line argument with a single action to be taken.
-        The nargs keyword argument associates a different number of command-line arguments with a single action.
-        The supported values are a number or the values in the NArgName class.
-
-        When a number N is supplied. N arguments from the command line will be gathered together into a list
-        Note that nargs=1 produces a list of one item. This is different from the default,
-        in which the item is produced by itself.
-
-        If the nargs keyword argument is not provided, the number of arguments consumed is determined by the action.
-        Generally this means a single command-line argument will be consumed and a single item (not a list) will be produced.
-
-        :param const: The const argument of add_argument() is used to hold constant values that are not read from the
-        command line but are required for the various ArgumentParser actions. The two most common uses of it are:
-
-        * When add_argument() is called with action=store_const or action=append_const.
-        These actions add the const value to one of the attributes of the object returned
-        by parse_args(). See the action description for examples.
-        * When add_argument() is called with option strings (like -f or --foo) and nargs=optional.
-        This creates an optional argument that can be followed by zero or one command-line arguments.
-        When parsing the command line, if the option string is encountered with no command-line argument following it,
-        the value of const will be assumed instead. See the nargs description for examples.
-
-        With the store_const and append_const actions, the const keyword argument must be given.
-        For other actions, it defaults to None.
-
-        :param default: All optional arguments and some positional arguments may be omitted at the command line.
-        The default keyword argument of add_argument(), whose value defaults to None,
-        specifies what value should be used if the command-line argument is not present.
-        For optional arguments, the default value is used when the option string was not present at the command line.
-
-        If the default value is a string, the parser parses the value as if it were a command-line argument.
-        In particular, the parser applies any type conversion argument, if provided,
-        before setting the attribute on the ParserHolder return value. Otherwise, the parser uses the value as is.
-
-        For positional arguments with nargs equal to optional or zero_or_more, the default value is used when
-        no command-line argument was present.
-
-        :param type: By default, ArgumentParser objects read command-line arguments in as simple strings.
-        However, quite often the command-line string should instead be interpreted as another type,
-        like a float or int.
-        The type keyword argument of add_argument() allows any necessary type-checking and type conversions to be performed.
-        Common built-in types and functions can be used directly as the value of the type argument.
-
-        See the section on the default keyword argument for information on when the type argument is applied to default arguments.
-
-        To ease the use of various types of files, the argparse module provides the factory FileType which
-        takes the mode=, bufsize=, encoding= and errors= arguments of the open() function.
-        For example, FileType('w') can be used to create a writable file.
-
-        type= can take any callable that takes a single string argument and returns the converted value.
-
-        The choices keyword argument may be more convenient for type checkers that simply check against a range of values.
-        See the choices section for more details.
-
-        :param choices: Some command-line arguments should be selected from a restricted set of values.
-        These can be handled by passing a container object as the choices keyword argument to Arg.
-        When the command line is parsed, argument values will be checked,
-        and an error message will be displayed if the argument was not one of the acceptable values.
-
-        Note that inclusion in the choices container is checked after any type conversions have been performed,
-        so the type of the objects in the choices container should match the type specified.
-
-        ny object that supports the in operator can be passed as the choices value, so dict objects,
-        set objects, custom containers, etc. are all supported.
-
-        :param required: In general, the argparse module assumes that flags like -f and --bar indicate optional arguments,
-        which can always be omitted at the command line. To make an option required,
-        True can be specified for the required= keyword argument to Arg
-
-        Note: Required options are generally considered bad form because users expect options to be optional,
-        and thus they should be avoided when possible.
-
-        :param help: The help value is a string containing a brief description of the argument.
-        When a user requests help (usually by using -h or --help at the command line),
-        these help descriptions will be displayed with each argument.
-
-        The help strings can include various format specifiers to avoid repetition of things like the program name
-        or the argument default.
-        The available specifiers include the program name, %(prog)s and most keyword arguments
-        to Arg, e.g. %(default)s, %(type)s, etc.
-
-        As the help string supports %-formatting, if you want a literal % to appear in the help string,
-        you must escape it as %%.
-
-        xargparse supports silencing the help entry for certain options,
-        by setting the help value to xargparse.SUPPRESS.
-
-        :param metavar: When ParserHolder generates help messages, it needs some way to refer to each expected argument.
-        By default, ParserHolder objects uses the name of the argument.
-
-        An alternative name can be specified with metavar.
-
-        Note that metavar only changes the displayed name.
-
-        Different values of nargs may cause the metavar to be used multiple times.
-        Providing a tuple to metavar specifies a different display for each of the arguments.
-
+        :param action: The basic type of action to be taken when this argument is encountered at the command line.
+        :param nargs: The number of command-line arguments that should be consumed.
+        :param const: A constant value required by some action and nargs selections.
+        :param default: The value produced if the argument is absent from the command line.
+        :param type: The type to which the command-line argument should be converted.
+        :param choices: A container of the allowable values for the argument.
+        :param required: Whether or not the command-line option may be omitted (optionals only).
+        :param help: A brief description of what the argument does.
+        :param metavar: A name for the argument in usage messages.
         :param version: Only used in version args, an optional string containing the version of the application.
-
         :param group: Used to associate the argument with the provided group
         """
 
@@ -779,7 +689,11 @@ class Args(_BaseArg):
 
 class ArgumentGroup(object):
     """
-    A parallel to ArgumentParser.add_argument_group, used as the group argument of an Arg object
+    By default, ArgumentParser groups command-line arguments into “positional arguments”
+    and “optional arguments” when displaying help messages.
+    When there is a better conceptual grouping of arguments than this default one,
+    appropriate groups can be created using the ArgumentGroup class, and added as the group parameter
+    of the Arg objects.
     """
 
     def __init__(self, title=None, description=None):
@@ -790,7 +704,10 @@ class ArgumentGroup(object):
 
 class MutuallyExclusiveGroup(Args):
     """
-    A parallel to ArgumentParser.add_mutually_exclusive_group, can be used in two ways:
+    Create a mutually exclusive group. xargparse will make sure that only one of the arguments in
+    the mutually exclusive group was present on the command line.
+
+    Can be used in two ways:
     1) Like ArgumentGroup supplied as the group parameter of an Arg object
     2) Used like the Args object
     In both cases all associated arguments will be mutually exclusive as expected, Usage as an Args object is more
@@ -800,7 +717,7 @@ class MutuallyExclusiveGroup(Args):
     def __init__(self, required=False, args=None, args_default=None):
         # type: (bool, Optional[List[Arg]], Optional[Any]) -> None
         """
-        :param required: Same as in the add_mutually_exclusive_group call
+        :param required: Makes sure that at least of argument in the group should be set
         :param args: When used as an argument, this list of arguments will be added to the group with
         their result put in the groups variable name.
         :param args_default: when used as an argument and required is set to false, this will be used when none of
@@ -813,8 +730,12 @@ class MutuallyExclusiveGroup(Args):
 
 class SubParserConfig(_KwargsHolder):
     """
-    A parallel to the ArgumentParser.add_subparsers call, we set this up in the ParserHolder._subparser_config
-    property to control the the creation of the subparser action
+    Many programs split up their functionality into a number of sub-commands,
+    for example, the svn program can invoke sub-commands like svn checkout, svn update, and svn commit.
+    Splitting up functionality this way can be a particularly good idea when a program performs several
+    different functions which require different kinds of command-line arguments.
+    ParserHolder supports the creation of such sub-commands by having ParserHolder variables that represent them.
+    To control how sub-parsers are created for the provided ParserHolder object we use the SubParserConfig class.
     """
 
     _kwarg_names = (
@@ -864,8 +785,8 @@ class SubParserConfig(_KwargsHolder):
 
 class SubParserMapper(_BaseArg):
     """
-    A mapper of subparser name to anything that we want to set when the subparser is chosen
-    None set parsers are not allowed in this implementation (explicit better than implicit)
+    A mapper of subparser name to anything that we want to set when the subparser is chosen.
+    Not set parsers are not allowed in this implementation (explicit is better than implicit)
     But you can subclass this parser and change _must_set_all_parsers to False to overwrite this.
     """
 
