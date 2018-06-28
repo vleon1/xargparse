@@ -1,7 +1,7 @@
 from enum import Enum, auto, unique
 from typing import List
 
-from xargparse import Arg, ParserHolder, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args, SubParserMapper
+from xargparse import Arg, ClassParser, ActionName, ArgumentGroup, MutuallyExclusiveGroup, Args, SubParserMapper
 
 
 # noinspection PyCompatibility
@@ -36,7 +36,7 @@ apples_group = MutuallyExclusiveGroup(required=False)
 
 
 # noinspection PyCompatibility
-class PersonInfo(ParserHolder):
+class PersonInfo(ClassParser):
 
     name: str = Arg(help="Your name")
     family: str = Arg(help="Your family name")
@@ -55,7 +55,7 @@ class PersonInfo(ParserHolder):
 
 
 # noinspection PyCompatibility
-class PropertyInfo(ParserHolder):
+class PropertyInfo(ClassParser):
 
     street: str = Arg(help="Where do you live")
 
@@ -78,13 +78,13 @@ class PropertyInfo(ParserHolder):
 
 
 # noinspection PyCompatibility
-class SubCommand1(ParserHolder):
+class SubCommand1(ClassParser):
 
     bla: str = Arg(help="bla??")
 
 
 # noinspection PyCompatibility
-class SubCommand2(ParserHolder):
+class SubCommand2(ClassParser):
 
     yada: str = Arg(help="bla??")
 

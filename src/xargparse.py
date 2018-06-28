@@ -1,3 +1,23 @@
+# Copyright (c) 2018 Leon Vaiman
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 """
 Class based extension to argparse
 """
@@ -16,17 +36,14 @@ if "mypy" in os.environ:
 
 # todo:
 
-# Other:
-# *
-# * named calls
+# Final stuff:
+# * docs
+# * tests
+# * readme
+# * pypi
+# * delete the pass statement...
 
-# Names:
-# * change namespace, parser-holder and parser class-parser (ClassParser)
-# * add_argument to Arg
-# * argparse to xargparse
-# * think about names
-
-# changes list:
+# Docs changes list:
 # * USE_SANE_DEFAULTS
 # * No parents argument for parser, inheritance is a perfect and working replacement
 # * added set_default, they must overwrite something that exist, not recommended to use
@@ -43,15 +60,12 @@ if "mypy" in os.environ:
 # Docs focus:
 # * single file code
 
-# tests:
+# Docs faq:
+# * Name choice and why not classparse
+
+# Addon Tests:
 # * Inherit twice from two classes with different orders, output strings should differ
 # * Make sure we see Set and see Description
-
-# Final stuff:
-# * readme
-# * license
-# * pypi
-# * delete the pass statement...
 pass
 
 
@@ -103,66 +117,66 @@ def _add_metaclass(metaclass):
 # Hacks: This section contains the hack code needed for this library to work
 # =============================
 
-def _action_call_patch(action_instance, argument_holder):
-    # type: (argparse.Action, ParserHolder) -> None
+def _action_call_patch(action, class_parser):
+    # type: (argparse.Action, ClassParser) -> None
     """
-    A hack function that allows us to patch argparse action.__call__ to use our ParserHolder
+    A hack function that allows us to patch argparse action.__call__ to use our ClassParser
     objects as a namespace instead of the provided one. This is ugly, but considering all the
     other alternatives I think it is the best choice.
-    It allows us to support all existing Action classes in argparse and any user created subclasses without the need to change
+    It allows us to support all existing Action classes in argparse and any user created sub-classes without the need to change
     anything, or add tons of subclasses.
     The downside is that if a user have an Action subclass that does something with the namespace that shouldn't be done on our
-    ParserHolder object, unexpected things might happen that are difficult to debug.
-    But from the user's point of view the ParserHolder is the namespace, and the library doesn't allow to supply a custom
+    ClassParser object, unexpected things might happen that are difficult to debug.
+    But from the user's point of view the ClassParser is the namespace, and the library doesn't allow to supply a custom
     namespace argument anyway, so hopefully these cases should be rare enough.
     """
 
-    parent = type(action_instance)
+    parent = type(action)
 
     class Replacer(parent):
 
         def __call__(self, parser, namespace, values, option_string=None):
-            # type: (argparse.ArgumentParser, ParserHolder, List[str], Optional[str]) -> None
+            # type: (argparse.ArgumentParser, ClassParser, List[str], Optional[str]) -> None
             del namespace
             # noinspection PyTypeChecker
-            return super(Replacer, self).__call__(parser, argument_holder, values, option_string)
+            return super(Replacer, self).__call__(parser, class_parser, values, option_string)
 
     Replacer.__name__ = parent.__name__
-    action_instance.__class__ = Replacer
+    action.__class__ = Replacer
 
 
 # noinspection PyProtectedMember
-def _subparser_action_call_patch(action_instance, argument_holder, subparser_mappers):
-    # type: (argparse._SubParsersAction, ParserHolder, List[Tuple[str, SubParserMapper]]) -> None
+def _subparser_action_call_patch(action, class_parser, subparser_mappers):
+    # type: (argparse._SubParsersAction, ClassParser, List[Tuple[str, SubParserMapper]]) -> None
     """ Same hack as _action_call_patch but with extra logic for subparsers """
 
-    parent = type(action_instance)
+    parent = type(action)
 
     class Replacer(parent):
 
         def __call__(self, parser, namespace, values, option_string=None):
-            # type: (argparse.ArgumentParser, ParserHolder, List[str], Optional[str]) -> None
+            # type: (argparse.ArgumentParser, ClassParser, List[str], Optional[str]) -> None
 
             alias = values[0]
             alias_to_name = getattr(self, "__alias_to_name")  # type: Dict[str, str]
-            name_to_namespace = getattr(self, "__name_to_namespace")  # type: Dict[str, ParserHolder]
+            name_to_namespace = getattr(self, "__name_to_namespace")  # type: Dict[str, ClassParser]
 
             # Set all parsers to None, only the one that was chosen will get overwritten
             for name in _viewkeys(name_to_namespace):
-                setattr(argument_holder, name, None)
+                setattr(class_parser, name, None)
 
             name = alias_to_name[alias]
-            setattr(argument_holder, name, name_to_namespace[name])
+            setattr(class_parser, name, name_to_namespace[name])
 
             for mapper_name, mapper in subparser_mappers:
                 value = mapper.map.get(name, None)
-                setattr(argument_holder, mapper_name, value)
+                setattr(class_parser, mapper_name, value)
 
             # noinspection PyTypeChecker,PyUnresolvedReferences
             return super(Replacer, self).__call__(parser, namespace, values, option_string)
 
     Replacer.__name__ = parent.__name__
-    action_instance.__class__ = Replacer
+    action.__class__ = Replacer
 
 
 # =============================
@@ -182,7 +196,7 @@ class SuppressError(ValueError):
 
 
 class UnparsedArgumentAccess(AttributeError):
-    """ Raised when we try to access a parser attribute before parse_args or parse_known_args was called"""
+    """ Raised when we try to access a ClassParser attribute before parse_args or parse_known_args was called """
     def __init__(self):
         # type: () -> None
         super(UnparsedArgumentAccess, self).__init__("Tried to access an unparsed argument")
@@ -190,20 +204,20 @@ class UnparsedArgumentAccess(AttributeError):
 
 class ArgumentForDefaultValueDoesntExist(AttributeError):
     """ Raised when trying to set a default value for an attribute that doesn't exist """
-    def __init__(self, parser, attribute_name):
-        # type: (ParserHolder, str) -> None
+    def __init__(self, class_parser, attribute_name):
+        # type: (ClassParser, str) -> None
         super(ArgumentForDefaultValueDoesntExist, self).__init__(
-            "class '%s' has not attribute named '%s'" % (type(parser), attribute_name)
+            "class '%s' has no attribute named '%s'" % (type(class_parser), attribute_name)
         )
 
 
 class NoArgumentInParser(AttributeError):
     """ Raised when trying to set a value to an argument of a parser, but the parser didn't define this argument """
 
-    def __init__(self, parser, dest):
-        # type: (ParserHolder, str) -> None
+    def __init__(self, class_parser, dest):
+        # type: (ClassParser, str) -> None
         super(NoArgumentInParser, self).__init__(
-            "class '%s' doesn't have the attribute '%s'" % (type(parser), dest)
+            "class '%s' doesn't have the attribute '%s'" % (type(class_parser), dest)
         )
 
 
@@ -217,12 +231,21 @@ class UnsupportedType(TypeError):
 
 
 class UnsupportedGroupType(UnsupportedType):
-    """ Raised when a group parameter in an Argument is not a subclass of one of the supported group types """
+    """ Raised when a group parameter in an Argument is not a sub-class of one of the supported group types """
     message_template = "Unsupported type '%s' in group argument"
 
     def __init__(self, group):
         # type: (Any) -> None
         super(UnsupportedGroupType, self).__init__(argument=group)
+
+
+class UnsupportedSubParserConfigType(UnsupportedType):
+    """ Raised when a subparser config object is not of the SubParserConfig type """
+    message_template = "Unsupported type '%s' for subparser"
+
+    def __init__(self, subparser_config):
+        # type: (Any) -> None
+        super(UnsupportedSubParserConfigType, self).__init__(argument=subparser_config)
 
 
 class UnsupportedArgumentType(UnsupportedType):
@@ -254,19 +277,19 @@ class MissingSubParserKeyInMapper(KeyError):
     Raised when a SubParserMapper with _must_set_all_parsers=True
     is missing a mapping for one of the subparsers
     """
-    def __init__(self, name):
+    def __init__(self, subparser_name):
         # type: (str) -> None
         super(MissingSubParserKeyInMapper, self).__init__(
-            "SubParserMapper is missing a key for the SubParser '%s'" % name
+            "SubParserMapper is missing a key for the SubParser '%s'" % subparser_name
         )
 
 
 class NoSubParserForKeyInMapper(KeyError):
     """  Raised when a SubParserMapper contains a key with noe SubParser to map to """
-    def __init__(self, name):
+    def __init__(self, subparser_name):
         # type: (str) -> None
         super(NoSubParserForKeyInMapper, self).__init__(
-            "SubParserMapper maps to a none existing SubParser '%s'" % name
+            "SubParserMapper maps to a none existing SubParser '%s'" % subparser_name
         )
 
 
@@ -285,7 +308,7 @@ The user can still define the argument with default=None if he wants that specif
 defined the new behaviour is used.
 
 This variable allows us to change the behaviour of this library to be more strict in that matter, we can also add
-an overwrite in a class and/or in an instance level of ArgumentHolder, but I see no reason to do so right now.
+an overwrite in a class and/or in an instance level of ClassParser, but I see no reason to do so right now.
 """
 USE_SANE_DEFAULTS = True
 
@@ -356,19 +379,19 @@ class ActionName(object):
     """
     This prints a complete help message for all the options in the current parser and then exits.
     By default a help action is automatically added to the parser. 
-    See ParserHolder for details of how the output is created.
+    See ClassParser for details of how the output is created.
     """
     help = "help"
 
     """
-    This expects a version= keyword argument in the add_argument() call,
+    This expects a version= keyword argument in the Arg class,
     and prints version information and exits when invoked.
     """
     version = "version"
 
 
 class ConflictHandlerName(object):
-    """ Use this when setting _conflict_handler in the ParserHolder instead of relying on strings """
+    """ Use this when setting _conflict_handler in the ClassParser instead of relying on strings """
 
     """
     The default conflict handler, Any duplicates will create an error.
@@ -431,7 +454,7 @@ class _Sortable(object):
     This is also the only thing guaranteed about _instance_index.
     """
 
-    _index_counter = 0
+    _global_index_counter = 0
 
     def __init__(self):
         # type: () -> None
@@ -439,8 +462,8 @@ class _Sortable(object):
         # No need to protect from racing access, since in a case of a "race" it will happen with two different classes
         # and so both will raise the counter and will have the same index value, but internally the class arguments will
         # still have sorted different indexes..
-        _Sortable._index_counter += 1
-        self._instance_index = _Sortable._index_counter
+        _Sortable._global_index_counter += 1
+        self._instance_index = _Sortable._global_index_counter
 
         super(_Sortable, self).__init__()
 
@@ -452,7 +475,6 @@ class _KwargsHolder(object):
 
     _kwarg_names = ()  # type: List[str]
     _kwargs_name_prefix = ""
-    _kwargs_name_postfix = ""
 
     def _get_kwargs(self):
         # type: () -> Dict[str, Any]
@@ -470,12 +492,12 @@ class _ParsedProperty(object):
     def __init__(self):
         # type: () -> None
 
-        self._instance_to_value = {}  # type: Dict[_BaseArg, Any]
+        self._instance_to_value = {}  # type: Dict[_ParsedProperty, Any]
 
         super(_ParsedProperty, self).__init__()
 
     def __get__(self, instance, owner):
-        # type: (_BaseArg, Any) -> None
+        # type: (_ParsedProperty, Any) -> None
         del owner
 
         if instance not in self._instance_to_value:
@@ -484,14 +506,14 @@ class _ParsedProperty(object):
         return self._instance_to_value[instance]
 
     def __set__(self, instance, value):
-        # type: (_BaseArg, Any) -> None
+        # type: (_ParsedProperty, Any) -> None
         self._instance_to_value[instance] = value
 
 
 class _BaseArg(_Sortable, _ParsedProperty, _KwargsHolder):
     """
     All classes that can be used as arguments inherit this class, and we use this class to store a sorted list
-    of such argument in our ParserHolder class.
+    of such argument in our ClassParser class.
     """
 
     def __repr__(self):
@@ -504,17 +526,17 @@ class _BaseArg(_Sortable, _ParsedProperty, _KwargsHolder):
         names = (n for n in dir(self) if not n.startswith("_"))
         name_and_values_full = ((n, getattr(self, n, "NOT PARSED")) for n in names)
         name_and_values = ((n, v) for n, v in name_and_values_full if not callable(v))
-        variables = ", ".join("%s=%r" % (n, v) for n, v in sorted(name_and_values, key=lambda nv: nv[0]))
-        return "%s(%s)" % (type(self).__name__, variables)
+        arguments = ", ".join("%s=%r" % (n, v) for n, v in sorted(name_and_values, key=lambda nv: nv[0]))
+        return "%s(%s)" % (type(self).__name__, arguments)
 
 
-class _ParserHolderMeta(type, _KwargsHolder):
+class _ClassParserMeta(type, _KwargsHolder):
     """
     We use this meta class for two reasons:
-    1) To give our classes the _sorted_arguments variable that allows to get only the _BaseArg variables defined in
+    1) To give our classes the _sorted_arguments variable that allows us to get only the _BaseArg arguments defined in
        the class (and not in the parents). We use __new__ to do that and it allows us to easily implement proper
        ArgumentParser.parents behaviour in our __init__ method
-    2) To supply the _get_kwargs method for the ParserHolder class (if ParserHolder were to inherit _KwargsHolder
+    2) To supply the _get_kwargs method for the ClassParser class (if ClassParser were to inherit _KwargsHolder
        it would have been an instance method and that is useless to us..)
     """
 
@@ -531,7 +553,7 @@ class _ParserHolderMeta(type, _KwargsHolder):
         # noinspection PyProtectedMember
         attrs["_sorted_arguments"] = sorted(_sortable_arguments, key=lambda kv: kv[1]._instance_index)
 
-        return super(_ParserHolderMeta, mcs).__new__(mcs, name, bases, attrs)
+        return super(_ClassParserMeta, mcs).__new__(mcs, name, bases, attrs)
 
 
 # =============================
@@ -599,13 +621,13 @@ class Arg(_BaseArg):
     @property
     def default(self):
         # type: () -> Any
-        """ An alternative to ArgumentParser.get_default """
+        """ Get the default value of an argument """
         return self._default
 
     @default.setter
     def default(self, value):
         # type: (Any) -> None
-        """ An alternative to ArgumentParser.set_defaults """
+        """ make sure that we don't set illegal values to to an arguments, and makes better defaults when needed """
 
         # we also make sure SUPPRESS is not used here
         if value == SUPPRESS:
@@ -644,6 +666,7 @@ class HelpArg(Arg):
 
 
 class VersionArg(Arg):
+    """ A convenience subclass for version arguments """
 
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -689,7 +712,7 @@ class Args(_BaseArg):
 
 class ArgumentGroup(object):
     """
-    By default, ArgumentParser groups command-line arguments into “positional arguments”
+    By default, ClassParser groups command-line arguments into “positional arguments”
     and “optional arguments” when displaying help messages.
     When there is a better conceptual grouping of arguments than this default one,
     appropriate groups can be created using the ArgumentGroup class, and added as the group parameter
@@ -734,8 +757,8 @@ class SubParserConfig(_KwargsHolder):
     for example, the svn program can invoke sub-commands like svn checkout, svn update, and svn commit.
     Splitting up functionality this way can be a particularly good idea when a program performs several
     different functions which require different kinds of command-line arguments.
-    ParserHolder supports the creation of such sub-commands by having ParserHolder variables that represent them.
-    To control how sub-parsers are created for the provided ParserHolder object we use the SubParserConfig class.
+    ClassParser supports the creation of such sub-commands by having ClassParser arguments that represent them.
+    To control how sub-parsers are created for the provided ClassParser object we use the SubParserConfig class.
     """
 
     _kwarg_names = (
@@ -757,19 +780,19 @@ class SubParserConfig(_KwargsHolder):
         # type: (...) -> None
         """
 
-        :param title: title for the sub-parser group in help output; by default “subcommands”
+        :param title: title for the subparser group in help output; by default “subcommands”
         if description is provided, otherwise uses title for positional arguments
-        :param description: description for the sub-parser group in help output, by default None
+        :param description: description for the subparser group in help output, by default None
         :param prog: usage information that will be displayed with sub-command help, by default
         the name of the program and any positional arguments before the subparser argument
-        :param parser_class: class which will be used to create sub-parser instances, by default
+        :param parser_class: class which will be used to create subparser instances, by default
         the class of the current parser (e.g. ArgumentParser)
         :param action: the basic type of action to be taken when this argument is encountered at
         the command line
         :param option_string: Mentioned in the signature of add_subparsers in the documentations
         and only there, I am not sure if and how it is used, and I left it here just in case it
         is needed for someone.
-        :param help: help for sub-parser group in help output, by default None
+        :param help: help for subparser group in help output, by default None
         :param metavar: string presenting available sub-commands in help; by default it is None
         and presents sub-commands in form {cmd1, cmd2, ..}
         """
@@ -803,8 +826,8 @@ class SubParserMapper(_BaseArg):
 # The parser class: The main class of this library.
 # =============================
 
-@_add_metaclass(_ParserHolderMeta)
-class ParserHolder(_BaseArg):
+@_add_metaclass(_ClassParserMeta)
+class ClassParser(_BaseArg):
     """
     Use this class to get a commandline argument, it is a parallel to argparse.ArgumentParser except that
     ArgumentParser is also used internally.
@@ -914,7 +937,7 @@ class ParserHolder(_BaseArg):
             aliases=_keep_default,  # type: Optional[List[str]]
             help=_keep_default,  # type: Optional[str]
             _add_help=None,  # type: Optional[bool]
-            _namespace=None  # type: Optional[ParserHolder]
+            _namespace=None  # type: Optional[ClassParser]
     ):
         # type: (...) -> None
         """
@@ -929,7 +952,7 @@ class ParserHolder(_BaseArg):
                            parameters to this object, and not to the temporary parent instance.
         """
 
-        super(ParserHolder, self).__init__()
+        super(ClassParser, self).__init__()
 
         # noinspection PyProtectedMember
         setattr(self, "__prog", prog)
@@ -986,7 +1009,7 @@ class ParserHolder(_BaseArg):
         return parser_kwargs
 
     def _get_parent_argument_parsers(self):
-        # type: () -> Iterable[ParserHolder]
+        # type: () -> Iterable[ClassParser]
 
         # We never call super __init__, this choice escapes the MRO which is usually not a good idea, but in our
         # case the MRO will not function for the most simple (and probably common) usage of parents that we try to
@@ -997,13 +1020,13 @@ class ParserHolder(_BaseArg):
         # 2) The first arguments will come from the parents right to left and from the child class and then
         # While the behaviour in the argparse library is parent left to right first and then the child arguments
         for base in self.__class__.__bases__:
-            if issubclass(base, ParserHolder):
-                parent_holder = base(_add_help=False, _namespace=self._namespace)
+            if issubclass(base, ClassParser):
+                parent_class_parser = base(_add_help=False, _namespace=self._namespace)
                 # noinspection PyProtectedMember
-                parent_holder._fill_parser()
+                parent_class_parser._fill_parser()
 
                 # noinspection PyProtectedMember
-                yield parent_holder._parser
+                yield parent_class_parser._parser
 
     def _fill_parser(self):
         # type: () -> None
@@ -1022,46 +1045,46 @@ class ParserHolder(_BaseArg):
             if action.dest is not SUPPRESS and action.default is not SUPPRESS:
                 if action.dest not in dir(self._namespace):
                     # I think if that happens we have a bug
-                    raise NoArgumentInParser(parser=self._namespace, dest=action.dest)
+                    raise NoArgumentInParser(class_parser=self._namespace, dest=action.dest)
                 setattr(self._namespace, action.dest, action.default)
 
         # noinspection PyProtectedMember,PyUnresolvedReferences
         for dest, value in self._parser._defaults.items():
             if dest not in dir(self._namespace):
                 # I think if that happens we have a bug
-                raise NoArgumentInParser(parser=self._namespace, dest=dest)
+                raise NoArgumentInParser(class_parser=self._namespace, dest=dest)
             setattr(self._namespace, dest, value)
 
     def _fill_parser_regular_arguments(self):
         # type: () -> None
 
         sorted_arguments = self._sorted_arguments  # type: List[Tuple[str, _BaseArg]]
-        subparser_names = {n for n, a in sorted_arguments if isinstance(a, ParserHolder)}
+        subparser_names = {n for n, a in sorted_arguments if isinstance(a, ClassParser)}
         subparser_mappers = list((n, a) for n, a in sorted_arguments if isinstance(a, SubParserMapper))
 
         for argument_name, argument in self._sorted_arguments:
-            if isinstance(argument, ParserHolder):
-                self._add_subparser(argument=argument, argument_name=argument_name, subparser_mappers=subparser_mappers)
+            if isinstance(argument, ClassParser):
+                self._add_subparser(subparser=argument, subparser_name=argument_name, subparser_mappers=subparser_mappers)
             elif isinstance(argument, Args):
-                for group_argument in argument.args:
-                    if not isinstance(group_argument, Arg):
-                        raise UnsupportedArgumentTypeInArgs(argument=group_argument)
-
+                for sub_argument in argument.args:
+                    if not isinstance(sub_argument, Arg):
+                        raise UnsupportedArgumentTypeInArgs(argument=sub_argument)
+                    # We use the group logic inside _add_argument to make sure the mutually exclusiveness works
                     if isinstance(argument, MutuallyExclusiveGroup):
-                        group_argument.group = argument
-                    self._add_argument(argument=group_argument, argument_name=argument_name)
-                self._parser.set_defaults(**{argument_name: argument.args_default})
+                        sub_argument.group = argument
+                    self._add_argument(argument=sub_argument, argument_name=argument_name)
+                self.set_defaults(**{argument_name: argument.args_default})
             elif isinstance(argument, Arg):
                 self._add_argument(argument=argument, argument_name=argument_name)
             elif isinstance(argument, SubParserMapper):
                 for name in _viewkeys(argument.map):
                     if name not in subparser_names:
-                        raise NoSubParserForKeyInMapper(name=name)
+                        raise NoSubParserForKeyInMapper(subparser_name=name)
                 # noinspection PyProtectedMember
                 if argument._must_set_all_parsers:
                     for name in subparser_names:
                         if name not in argument.map:
-                            raise MissingSubParserKeyInMapper(name=name)
+                            raise MissingSubParserKeyInMapper(subparser_name=name)
             else:
                 raise UnsupportedArgumentType(argument=argument)
 
@@ -1092,36 +1115,38 @@ class ParserHolder(_BaseArg):
 
             self._add_argument(argument=version_argument, argument_name=_not_named_argument)
 
-    def _add_subparser(self, argument, argument_name, subparser_mappers):
-        # type: (ParserHolder, str, List[Tuple[str, SubParserMapper]]) -> None
+    def _add_subparser(self, subparser, subparser_name, subparser_mappers):
+        # type: (ClassParser, str, List[Tuple[str, SubParserMapper]]) -> None
 
         if self._subparser_action is None:
             self._add_subparser_action(subparser_mappers=subparser_mappers)
 
         # noinspection PyProtectedMember
-        add_parser_kwargs = dict(argument._parser_kwargs)
+        add_parser_kwargs = dict(subparser._parser_kwargs)
         # noinspection PyProtectedMember
-        add_parser_kwargs.update(argument._get_kwargs())
+        add_parser_kwargs.update(subparser._get_kwargs())
 
-        argument._parser = self._subparser_action.add_parser(argument_name, **add_parser_kwargs)
+        subparser._parser = self._subparser_action.add_parser(name=subparser_name, **add_parser_kwargs)
 
         alias_to_name = getattr(self._subparser_action, "__alias_to_name")  # type: Dict[str, str]
-        name_to_namespace = getattr(self._subparser_action, "__name_to_namespace")  # type: Dict[str, ParserHolder]
-        name_to_namespace[argument_name] = argument
-        alias_to_name[argument_name] = argument_name
+        name_to_namespace = getattr(self._subparser_action, "__name_to_namespace")  # type: Dict[str, ClassParser]
+        name_to_namespace[subparser_name] = subparser
+        alias_to_name[subparser_name] = subparser_name
         for alias in add_parser_kwargs.get("aliases", []):
-            alias_to_name[alias] = argument_name
+            alias_to_name[alias] = subparser_name
 
         # noinspection PyProtectedMember
-        argument._fill_parser()
+        subparser._fill_parser()
 
     def _add_subparser_action(self, subparser_mappers):
         # type: (List[Tuple[str, SubParserMapper]]) -> None
 
         if self._subparser_config is None:
             subparser_config = SubParserConfig()
-        else:
+        elif isinstance(self._subparser_config, SubParserConfig):
             subparser_config = self._subparser_config
+        else:
+            raise UnsupportedSubParserConfigType(subparser_config=self._subparser_config)
         # noinspection PyProtectedMember
         subparser_config_kwargs = subparser_config._get_kwargs()
         self._subparser_action = self._parser.add_subparsers(**subparser_config_kwargs)
@@ -1129,7 +1154,11 @@ class ParserHolder(_BaseArg):
         setattr(self._subparser_action, "__alias_to_name", {})
         setattr(self._subparser_action, "__name_to_namespace", {})
 
-        _subparser_action_call_patch(self._subparser_action, self._namespace, subparser_mappers)
+        _subparser_action_call_patch(
+            action=self._subparser_action,
+            class_parser=self._namespace,
+            subparser_mappers=subparser_mappers
+        )
 
     def _add_argument(self, argument, argument_name):
         # type: (Arg, Union[str, _not_named_argument]) -> None
@@ -1160,7 +1189,7 @@ class ParserHolder(_BaseArg):
         # noinspection PyNoneFunctionAssignment
         action = add_argument_function(*argument.flags, **argument_kwargs)
         # noinspection PyTypeChecker
-        _action_call_patch(action, self._namespace)
+        _action_call_patch(action=action, class_parser=self._namespace)
 
     def set_default(self, name, value):
         # type: (str, Any) -> None
@@ -1174,7 +1203,7 @@ class ParserHolder(_BaseArg):
         """
 
         if name not in dir(self):
-            raise ArgumentForDefaultValueDoesntExist(parser=self, attribute_name=name)
+            raise ArgumentForDefaultValueDoesntExist(class_parser=self, attribute_name=name)
 
         self._parser.set_defaults(**{name: value})
 
@@ -1195,15 +1224,15 @@ class ParserHolder(_BaseArg):
     def get_default(self, name):
         # type: (str) -> Any
         """
-        Get the default value for an attribute, as set by either add_argument() or by adding through Arg.
+        Get the default value for an attribute, as set by either adding an Arg or by using set_default or set_defaults.
         """
         return self._parser.get_default(dest=name)
 
     def parse_args(self, args=None):
-        # type: (Optional[List[str]]) -> ParserHolder
+        # type: (Optional[List[str]]) -> ClassParser
         """
-        Convert argument strings to objects and assign them as attributes of the Parser. Return the Parser.
-        Args set in the Parser subclass determine exactly what objects are parsed.
+        Convert argument strings to objects and assign them as attributes of the ClassParser. Return the ClassParser.
+        Arg objects set in the ClassParser subclass determine exactly what objects are parsed.
         See the documentation for Arg for details.
 
         :param args: List of strings to parse. The default is taken from sys.argv.
@@ -1214,14 +1243,14 @@ class ParserHolder(_BaseArg):
         return self
 
     def parse_known_args(self, args=None):
-        # type: (Optional[List[str]]) -> Tuple[ParserHolder, List[str]]
+        # type: (Optional[List[str]]) -> Tuple[ClassParser, List[str]]
         """
         Sometimes a script may only parse a few of the command-line arguments,
         passing the remaining arguments on to another script or program.
         In these cases, the parse_known_args() method can be useful.
         It works much like parse_args() except that it does not produce an error
         when extra arguments are present.
-        Instead, it returns a two item tuple containing the populated namespace
+        Instead, it returns a two item tuple containing the parsed ClassParser
         and the list of remaining argument strings.
         """
 
@@ -1232,7 +1261,7 @@ class ParserHolder(_BaseArg):
     def format_usage(self):
         # type: () -> str
         """
-        Return a string containing a brief description of how the ArgumentParser should be
+        Return a string containing a brief description of how the ClassParser should be
         invoked on the command line.
         """
         return self._parser.format_usage()
@@ -1241,14 +1270,14 @@ class ParserHolder(_BaseArg):
         # type: () -> str
         """
         Return a string containing a help message, including the program usage and information
-        about the arguments registered with the ArgumentParser.
+        about the arguments registered with the ClassParser.
         """
         return self._parser.format_help()
 
     def print_usage(self, file=None):
         # type: (Optional[file]) -> None
         """
-        Print a brief description of how the ArgumentParser should be invoked on the command line.
+        Print a brief description of how the ClassParser should be invoked on the command line.
         If file is None, sys.stdout is assumed.
         """
         return self._parser.print_usage(file=file)
@@ -1257,7 +1286,7 @@ class ParserHolder(_BaseArg):
         # type: (Optional[file]) -> None
         """
         Print a help message, including the program usage and information about the arguments
-        registered with the ArgumentParser. If file is None, sys.stdout is assumed.
+        registered with the ClassParser. If file is None, sys.stdout is assumed.
         """
         return self._parser.print_help(file=file)
 
