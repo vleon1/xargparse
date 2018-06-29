@@ -9,7 +9,6 @@ Class based extension to argparse
 # * tests
 # * readme
 # * pypi
-# * delete the pass statement...
 
 # Docs changes list:
 # * USE_SANE_DEFAULTS
