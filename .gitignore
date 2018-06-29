@@ -2,3 +2,5 @@
 __pycache__
 venv
 .env
+build/
+.mypy_cache
