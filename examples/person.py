@@ -86,7 +86,7 @@ class SubCommand1(ClassParser):
 # noinspection PyCompatibility
 class SubCommand2(ClassParser):
 
-    yada: str = Arg(help="bla??")
+    yada: str = Arg("--yada", help="bla??")
 
 
 # noinspection PyCompatibility
@@ -126,7 +126,7 @@ if __name__ == "__main__":
 
     args.parse_args(["leon", "vaiman", "29", "male", "gorodisky",
                      "--no-cats", "--one-apple", "--one-apple", "--green", "--green", "--blue",
-                     "sub2", "2"])
+                     "sub2"])
     print(args.has_cats)
     print(args)
     print(args.parser_name)

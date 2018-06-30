@@ -108,7 +108,7 @@ def _action_call_patch(action, class_parser):
         """ Replaces the original class to overwrite __call__ """
 
         def __call__(self, parser, namespace, values, option_string=None):
-            # type: (argparse.ArgumentParser, ClassParser, List[str], Optional[str]) -> None
+            # type: (argparse.ArgumentParser, argparse.Namespace, List[str], Optional[str]) -> None
             del namespace
             # noinspection PyTypeChecker
             return super(Replacer, self).__call__(parser, class_parser, values, option_string)
@@ -139,11 +139,15 @@ def _subparser_action_call_patch(action, class_parser, subparser_mappers):
                 setattr(class_parser, name, None)
 
             name = alias_to_name[alias]
-            setattr(class_parser, name, name_to_namespace[name])
+            subparser = name_to_namespace[name]
+            setattr(class_parser, name, subparser)
 
             for mapper_name, mapper in subparser_mappers:
                 value = mapper.map.get(name, None)
                 setattr(class_parser, mapper_name, value)
+
+            # noinspection PyProtectedMember
+            subparser._set_parser_defaults()  # pylint: disable=protected-access
 
             # noinspection PyTypeChecker,PyUnresolvedReferences
             return super(Replacer, self).__call__(parser, namespace, values, option_string)
@@ -484,6 +488,9 @@ class _ParsedProperty(object):
         # type: (_ParsedProperty, Any) -> None
         del owner
 
+        if instance is None:
+            return self
+
         if instance not in self._instance_to_value:
             raise UnparsedArgumentAccess()
 
@@ -507,9 +514,8 @@ class _BaseArg(_Sortable, _ParsedProperty, _KwargsHolder):  # pylint: disable=to
 
         We can do better here, but for now its enough..
         """
-        names = (n for n in dir(self) if not n.startswith("_"))
-        name_and_values_full = ((n, getattr(self, n, "NOT PARSED")) for n in names)
-        name_and_values = ((n, v) for n, v in name_and_values_full if not callable(v))
+        names = (n for n in dir(self) if isinstance(getattr(type(self), n, None), _ParsedProperty))
+        name_and_values = ((n, getattr(self, n, "NOT PARSED")) for n in names)
         arguments = ", ".join(
             "%s=%r" % (n, v) for n, v in sorted(name_and_values, key=lambda nv: nv[0])
         )
@@ -967,6 +973,8 @@ class ClassParser(_BaseArg):
         # noinspection PyProtectedMember
         self._subparser_action = None  # type: Optional[argparse._SubParsersAction]
 
+        self._fill_parser()
+
     def _get_parser_kwargs(self, add_help):
         # type: (Optional[bool]) -> Dict[str, Any]
 
@@ -1011,8 +1019,6 @@ class ClassParser(_BaseArg):
             if issubclass(base, ClassParser):
                 parent_class_parser = base(  # pylint: disable=unexpected-keyword-arg
                     _add_help=False, _namespace=self._namespace)
-                # noinspection PyProtectedMember
-                parent_class_parser._fill_parser()  # pylint: disable=protected-access,no-member
 
                 # noinspection PyProtectedMember
                 yield parent_class_parser._parser  # pylint: disable=protected-access,no-member
@@ -1020,31 +1026,9 @@ class ClassParser(_BaseArg):
     def _fill_parser(self):
         # type: () -> None
 
-        self._fill_parser_defaults()
-
         self._fill_parser_regular_arguments()
 
         self._fill_parser_special_arguments()
-
-    def _fill_parser_defaults(self):
-        # type: () -> None
-
-        # noinspection PyProtectedMember,PyUnresolvedReferences
-        for action in self._parser._actions:  # pylint: disable=protected-access
-            if action.dest is not SUPPRESS and action.default is not SUPPRESS:
-                if action.dest not in dir(self._namespace):
-                    # I think if that happens we have a bug
-                    raise NoArgumentInParser(  # type: ignore
-                        class_parser=self._namespace, dest=action.dest)
-                setattr(self._namespace, action.dest, action.default)
-
-        # noinspection PyProtectedMember,PyUnresolvedReferences
-        for dest, value in self._parser._defaults.items():  # pylint: disable=protected-access
-            if dest not in dir(self._namespace):
-                # I think if that happens we have a bug
-                raise NoArgumentInParser(  # type: ignore
-                    class_parser=self._namespace, dest=dest)
-            setattr(self._namespace, dest, value)
 
     def _fill_parser_regular_arguments(self):
         # type: () -> None
@@ -1216,6 +1200,26 @@ class ClassParser(_BaseArg):
                 if name not in subparser_mapper.map:
                     raise MissingSubParserKeyInMapper(subparser_name=name)
 
+    def _set_parser_defaults(self):
+        # type: () -> None
+
+        # noinspection PyProtectedMember,PyUnresolvedReferences
+        for action in self._parser._actions:  # pylint: disable=protected-access
+            if action.dest is not SUPPRESS and action.default is not SUPPRESS:
+                if action.dest not in dir(self._namespace):
+                    # I think if that happens we have a bug
+                    raise NoArgumentInParser(  # type: ignore
+                        class_parser=self._namespace, dest=action.dest)
+                setattr(self._namespace, action.dest, action.default)
+
+        # noinspection PyProtectedMember,PyUnresolvedReferences
+        for dest, value in self._parser._defaults.items():  # pylint: disable=protected-access
+            if dest not in dir(self._namespace):
+                # I think if that happens we have a bug
+                raise NoArgumentInParser(  # type: ignore
+                    class_parser=self._namespace, dest=dest)
+            setattr(self._namespace, dest, value)
+
     def set_default(self, name, value):
         # type: (str, Any) -> None
         """
@@ -1265,7 +1269,7 @@ class ClassParser(_BaseArg):
         :param args: List of strings to parse. The default is taken from sys.argv.
         """
 
-        self._fill_parser()
+        self._set_parser_defaults()
         self._parser.parse_args(args=args)
         return self
 
@@ -1281,7 +1285,7 @@ class ClassParser(_BaseArg):
         and the list of remaining argument strings.
         """
 
-        self._fill_parser()
+        self._set_parser_defaults()
         _, remainder = self._parser.parse_known_args(args=args)
         return self, remainder
 

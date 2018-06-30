@@ -4,11 +4,13 @@ Class based extension to argparse
 # todo:
 
 # Final stuff:
-# * lint and mypy
 # * docs
 # * tests
 # * readme
 # * pypi
+
+# Docs position:
+# * usage (147)
 
 # Docs changes list:
 # * USE_SANE_DEFAULTS
@@ -33,3 +35,5 @@ Class based extension to argparse
 # Addon Tests:
 # * Inherit twice from two classes with different orders, output strings should differ
 # * Make sure we see Set and see Description
+# * Defaults when unset should work
+# * Subparser with unset optional arg
