@@ -131,7 +131,7 @@ This page contains the API reference information.
     optional arguments:
     -h, --help  show this help message and exit
 
-    Note that the program name, whether determined from sys.argv[0] or from the prog= argument, is available to help messages using the %(prog)s format specifier.
+    Note that the program name, whether determined from sys.argv[0] or from the _prog= argument, is available to help messages using the %(prog)s format specifier.
 
     >>> class Arguments(ClassParser):
     ...   _prog = 'myprogram'
@@ -144,14 +144,17 @@ This page contains the API reference information.
     -h, --help  show this help message and exit
     --foo FOO   foo of the myprogram program
 
-    usage
+    _usage
 
-    By default, :class:`ArgumentParser` calculates the usage message from the arguments it contains:
+    By default, :class:`ClassParser` calculates the usage message from the arguments it contains:
 
-    >>> parser = argparse.ArgumentParser(prog='PROG')
-    >>> parser.add_argument('--foo', nargs='?', help='foo help')
-    >>> parser.add_argument('bar', nargs='+', help='bar help')
-    >>> parser.print_help()
+    >>> class Arguments(ClassParser):
+    ...   _prog = 'PROG'
+    ...   foo = Arg('--foo', nargs=NArgName.optional, help='foo help')
+    ...   bar = Arg(nargs=NArgName.one_or_more, help='bar help')
+    ...
+    >>> Arguments().print_help()
+
     usage: PROG [-h] [--foo [FOO]] bar [bar ...]
 
     positional arguments:
@@ -163,10 +166,13 @@ This page contains the API reference information.
 
     The default message can be overridden with the usage= keyword argument:
 
-    >>> parser = argparse.ArgumentParser(prog='PROG', usage='%(prog)s [options]')
-    >>> parser.add_argument('--foo', nargs='?', help='foo help')
-    >>> parser.add_argument('bar', nargs='+', help='bar help')
-    >>> parser.print_help()
+    >>> class Arguments(ClassParser):
+    ...   _prog = 'PROG'
+    ...   _usage = '%(prog)s [options]'
+    ...   foo = Arg('--foo', nargs=NArgName.optional, help='foo help')
+    ...   bar = Arg(nargs=NArgName.one_or_more, help='bar help')
+    ...
+    >>> Arguments().print_help()
     usage: PROG [options]
 
     positional arguments:
@@ -177,12 +183,14 @@ This page contains the API reference information.
     --foo [FOO]  foo help
 
     The %(prog)s format specifier is available to fill in the program name in your usage messages.
-    description
+    _description
 
-    Most calls to the :class:`ArgumentParser` constructor will use the description= keyword argument. This argument gives a brief description of what the program does and how it works. In help messages, the description is displayed between the command-line usage string and the help messages for the various arguments:
+    Most subclasses to the :class:`ClassParser` will overwrite the _description= keyword argument. This argument gives a brief description of what the program does and how it works. In help messages, the description is displayed between the command-line usage string and the help messages for the various arguments:
 
-    >>> parser = argparse.ArgumentParser(description='A foo that bars')
-    >>> parser.print_help()
+    >>> class Arguments(ClassParser):
+    ...   _description = 'A foo that bars'
+    ...
+    >>> Arguments().print_help()
     usage: argparse.py [-h]
 
     A foo that bars
@@ -191,14 +199,15 @@ This page contains the API reference information.
     -h, --help  show this help message and exit
 
     By default, the description will be line-wrapped so that it fits within the given space. To change this behavior, see the formatter_class argument.
-    epilog
+    _epilog
 
-    Some programs like to display additional description of the program after the description of the arguments. Such text can be specified using the epilog= argument to :class:`ArgumentParser`:
+    Some programs like to display additional description of the program after the description of the arguments. Such text can be specified by overwriting the _epilog= argument to the :class:`ClassParser` subclass:
 
-    >>> parser = argparse.ArgumentParser(
-    ...     description='A foo that bars',
-    ...     epilog="And that's how you'd foo a bar")
-    >>> parser.print_help()
+    >>> class Arguments(ClassParser):
+    ...   _description = 'A foo that bars'
+    ...   _epilog = "And that's how you'd foo a bar"
+    ...
+    >>> Arguments().print_help()
     usage: argparse.py [-h]
 
     A foo that bars
@@ -208,7 +217,7 @@ This page contains the API reference information.
 
     And that's how you'd foo a bar
 
-    As with the description argument, the epilog= text is by default line-wrapped, but this behavior can be adjusted with the formatter_class argument to :class:`ArgumentParser`.
+    As with the description argument, the _epilog= text is by default line-wrapped, but this behavior can be adjusted with the _formatter_class argument to :class:`ClassParser`.
     parents
 
     Sometimes, several parsers share a common set of arguments. Rather than repeating the definitions of these arguments, a single parser with all the shared arguments and passed to parents= argument to :class:`ArgumentParser` can be used. The parents= argument takes a list of :class:`ArgumentParser` objects, collects all the positional and optional actions from them, and adds these actions to the :class:`ArgumentParser` object being constructed:

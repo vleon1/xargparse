@@ -10,7 +10,7 @@ Class based extension to argparse
 # * pypi
 
 # Docs position:
-# * usage (147)
+# * parents
 
 # Docs changes list:
 # * USE_SANE_DEFAULTS
