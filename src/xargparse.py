@@ -203,6 +203,21 @@ class NoArgumentInParser(AttributeError):
         )
 
 
+class UnexpectedArgumentsInInit(AttributeError):
+    """
+    Raised when one of the classes with a dynamic kwargs init gets an unexpected argument.
+
+    Due to python 2 compatibility we had to use dynamic kwargs in some of the classes.
+    """
+
+    def __init__(self, instance, arguments):
+        # type: (Any, Iterable[str]) -> None
+        super(UnexpectedArgumentsInInit, self).__init__(
+            "Class '%s' got unexpected arguments in __init__: '%s'" %
+            (type(instance), ", ".join(arguments))
+        )
+
+
 class UnsupportedType(TypeError):
     """
     Generic base exception raised when an argument of a wrong type is used in the wrong place
@@ -544,22 +559,7 @@ class Arg(_BaseArg):  # pylint: disable=too-few-public-methods,too-many-instance
         "version",
     ]
 
-    # noinspection PyShadowingBuiltins
-    def __init__(  # type: ignore  # pylint: disable=too-many-arguments
-            self,
-            *flags,  # type: Union[str, List[str]]
-            action=_KEEP_DEFAULT,  # type: Union[None, str, argparse.Action]
-            nargs=_KEEP_DEFAULT,  # type: Union[None, str, int]
-            const=_KEEP_DEFAULT,  # type: Any
-            default=_KEEP_DEFAULT,  # type: Any
-            type=_KEEP_DEFAULT,  # type: Any  # pylint: disable=redefined-builtin
-            choices=_KEEP_DEFAULT,  # type: List[Any]
-            required=_KEEP_DEFAULT,  # type: bool
-            help=_KEEP_DEFAULT,  # type: Optional[str]  # pylint: disable=redefined-builtin
-            metavar=_KEEP_DEFAULT,  # type: Optional[str]
-            version=_KEEP_DEFAULT,  # type: Optional[str]
-            group=None,  # type: Union[None, ArgumentGroup, MutuallyExclusiveGroup]
-    ):
+    def __init__(self, *flags, **kwargs):
         # type: (...) -> None
         """
         :param flags: A flag or a list of flags for optional arguments (This will turn this argument
@@ -582,21 +582,27 @@ class Arg(_BaseArg):  # pylint: disable=too-few-public-methods,too-many-instance
         super(Arg, self).__init__()
 
         self.flags = flags
-        self.action = action
-        self.nargs = nargs
-        self.const = const
-        self.type = type
-        self.choices = choices
-        self.required = required
-        self.help = help
-        self.metavar = metavar
-        self.version = version
+        self.action = kwargs.pop(
+            "action", _KEEP_DEFAULT)  # type: Union[None, str, argparse.Action, object]
+        self.nargs = kwargs.pop("nargs", _KEEP_DEFAULT)  # type: Union[None, str, int, object]
+        self.const = kwargs.pop("const", _KEEP_DEFAULT)  # type: Any
+        self.type = kwargs.pop("type", _KEEP_DEFAULT)  # type: Any
+        self.choices = kwargs.pop("choices", _KEEP_DEFAULT)  # type: Union[List[Any], object]
+        self.required = kwargs.pop("required", _KEEP_DEFAULT)  # type: Union[bool, object]
 
-        self.group = group
+        self.help = kwargs.pop("help", _KEEP_DEFAULT)  # type: Union[None, str, object]
+        self.metavar = kwargs.pop("metavar", _KEEP_DEFAULT)  # type: Union[None, str, object]
+        self.version = kwargs.pop("version", _KEEP_DEFAULT)  # type: Union[None, str, object]
+
+        self.group = kwargs.pop(
+            "group", None)  # type: Union[None, ArgumentGroup, MutuallyExclusiveGroup]
         # This is overwritten by the next line, and is only set to make the ide happy.
-        self._default = default
+        self._default = kwargs.pop("default", _KEEP_DEFAULT)  # type: Any
         # Keep at the end since the setter does checks that can depend on the other values
-        self.default = default
+        self.default = self._default
+
+        if kwargs:
+            raise UnexpectedArgumentsInInit(instance=self, arguments=_viewkeys(kwargs))
 
     @property
     def default(self):
@@ -640,12 +646,7 @@ class HelpArg(Arg):  # pylint: disable=too-few-public-methods
     A convenience subclass for help arguments
     """
 
-    # noinspection PyShadowingBuiltins
-    def __init__(  # type: ignore
-            self,
-            *flags,  # type: List[str]
-            help=_KEEP_DEFAULT,  # type: Optional[str]  # pylint: disable=redefined-builtin
-    ):
+    def __init__(self, *flags, **kwargs):
         # type: (...) -> None
         """
         :param flags: Flags for the help argument, when not specified -h and --help are used
@@ -655,19 +656,19 @@ class HelpArg(Arg):  # pylint: disable=too-few-public-methods
         if not flags:
             flags = ["--help", "-h"]  # type: ignore
 
-        super(HelpArg, self).__init__(*flags, help=help, action=ActionName.help)  # type: ignore
+        action = ActionName.help
+        help_ = kwargs.pop("help", _KEEP_DEFAULT)  # type: Union[None, str, object]
+
+        if kwargs:
+            raise UnexpectedArgumentsInInit(instance=self, arguments=_viewkeys(kwargs))
+
+        super(HelpArg, self).__init__(*flags, action=action, help=help_)
 
 
 class VersionArg(Arg):  # pylint: disable=too-few-public-methods
     """ A convenience subclass for version arguments """
 
-    # noinspection PyShadowingBuiltins
-    def __init__(  # type: ignore
-            self,
-            *flags,  # type: Union[str, List[str]]
-            version=None,  # type: Optional[str]
-            help=_KEEP_DEFAULT,  # type: Optional[str]  # pylint: disable=redefined-builtin
-    ):
+    def __init__(self, *flags, **kwargs):
         # type: (...) -> None
         """
         :param flags: Flags for the version argument, when not specified -v and --version are used
@@ -678,8 +679,14 @@ class VersionArg(Arg):  # pylint: disable=too-few-public-methods
         if not flags:
             flags = ["--version", "-v"]  # type: ignore
 
-        super(VersionArg, self).__init__(  # type: ignore
-            *flags, version=version, help=help, action=ActionName.version)
+        action = ActionName.version
+        help_ = kwargs.pop("help", _KEEP_DEFAULT)  # type: Union[None, str, object]
+        version = kwargs.pop("version", None)  # type: Optional[str]
+
+        if kwargs:
+            raise UnexpectedArgumentsInInit(instance=self, arguments=_viewkeys(kwargs))
+
+        super(VersionArg, self).__init__(*flags, action=action, help=help_, version=version)
 
 
 class Args(_BaseArg):  # pylint: disable=too-few-public-methods
